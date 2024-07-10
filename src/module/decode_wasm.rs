@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use crate::{instruction, opcode, types, util::binary_stream::{BinaryInputStream, BinaryOutputStream}, Function, Module, ModuleCreateError, TableBranchData};
+use crate::{instruction, types, util::binary_stream::{BinaryInputStream, BinaryOutputStream}, Function, TableBranchData};
+use super::{Module, ModuleCreateError, opcode};
 
 // Own binary stream implementation
 impl<'t> BinaryInputStream<'t> {
@@ -142,7 +143,7 @@ fn decode_expression(stream: &mut BinaryInputStream, table_branch_datas: &mut Ve
         let opcode_u = stream.get::<u8>().ok_or(ModuleCreateError::UnexpectedStreamEnd)?;
         let opcode = opcode::Main::try_from(opcode_u).map_err(|_| ModuleCreateError::WASMDeocdeError)?;
 
-        let instruction = instruction::Instruction::try_from(opcode).ok();
+        let instruction: Option<instruction::Instruction> = opcode.try_into().ok();
 
         type Opcode = opcode::Main;
 
@@ -259,7 +260,7 @@ fn decode_expression(stream: &mut BinaryInputStream, table_branch_datas: &mut Ve
     ))
 }
 
-impl crate::Module {
+impl Module {
     pub fn from_wasm(src: &[u8]) -> Result<Self, ModuleCreateError> {
         // Sections
         let sections = decode_sections(src)?;
@@ -281,6 +282,7 @@ impl crate::Module {
         } else {
             Vec::new()
         };
+        // Multimemory interactions aren't supported yet
         _ = tables;
 
         let memories = if let Some(bits) = sections.get(&types::SectionID::Memory) {
@@ -288,6 +290,7 @@ impl crate::Module {
         } else {
             Vec::new()
         };
+        // Multimemory interactions aren't supported yet
         _ = memories;
 
         let globals: Vec<types::GlobalDescriptor> = if let Some(bits) = sections.get(&types::SectionID::Global) {

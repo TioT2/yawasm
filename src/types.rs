@@ -5,32 +5,6 @@ pub struct FunctionType {
     pub outputs: Vec<ValueType>,
 }
 
-#[derive(Copy, Clone)]
-pub union V128 {
-    pub i128x1: [i128; 1],
-    pub u128x1: [u128; 1],
-
-    pub f64x2: [f64; 2],
-    pub u64x2: [u64; 2],
-    pub i64x2: [i64; 2],
-
-    pub f32x4: [f32; 4],
-    pub u32x4: [u32; 4],
-    pub i32x4: [i32; 4],
-
-    pub u16x8: [u16; 8],
-    pub i16x8: [i16; 8],
-
-    pub u8x16: [u8; 16],
-    pub i8x16: [i8; 16],
-}
-
-impl Default for V128 {
-    fn default() -> Self {
-        Self { u8x16: [0; 16] }
-    }
-}
-
 #[derive(Copy, Clone, Hash, PartialEq, Eq)]
 pub enum NumberType {
     I32 = 0x7F,
@@ -108,7 +82,7 @@ impl TryFrom<u8> for ValueType {
 
 #[derive(Copy, Clone)]
 pub enum Value {
-    V128(V128),
+    V128(u128),
     F64(f64),
     I64(i64),
     F32(f32),
@@ -133,7 +107,7 @@ value_impl_from!(i64, I64);
 value_impl_from!(u64, I64);
 value_impl_from!(f32, F32);
 value_impl_from!(f64, F64);
-value_impl_from!(V128, V128);
+value_impl_from!(u128, V128);
 
 macro_rules! value_impl_as {
     ($dst: ty, $name: ident, $mut_name: ident, $arm: ident) => {
@@ -197,6 +171,16 @@ impl Value {
 pub struct Limits {
     pub min: u32,
     pub max: Option<u32>,
+}
+
+impl Limits {
+    pub fn validate(&self) -> bool {
+        if let Some(max) = self.max {
+            self.min <= max
+        } else {
+            true
+        }
+    }
 }
 
 #[derive(Copy, Clone, Hash, PartialEq, Eq)]
@@ -322,3 +306,51 @@ pub struct GlobalDescriptor {
     pub mutability: Mutability,
     pub expression: Vec<u8>,
 }
+
+/*
+pub trait WasmValueAssoc: From<Value> + Into<Value> {
+
+}
+
+pub trait WasmValueType {
+    fn into_values(self) -> Vec<Value>;
+    fn try_from_values(values: &[Value]) -> Option<Self> where Self: Sized;
+}
+
+impl<T: WasmValueAssoc> WasmValueType for T {
+    fn into_values(self) -> Vec<Value> {
+        vec! [self.into()]
+    }
+
+    fn try_from_values(values: &[Value]) -> Option<Self> {
+        TryInto::<T>::try_into(*values.get(0)?).ok()
+    }
+}
+
+impl<A: WasmValueAssoc, B: WasmValueAssoc> WasmValueType for (A, B) {
+    fn into_values(self) -> Vec<Value> {
+        vec![self.0.into(), self.1.into()]
+    }
+
+    fn try_from_values(values: &[Value]) -> Option<Self> {
+        Some((
+            TryInto::<A>::try_into(*values.get(0)?).ok()?,
+            TryInto::<B>::try_into(*values.get(1)?).ok()?,
+        ))
+    }
+}
+
+impl<A: WasmValueAssoc, B: WasmValueAssoc, C: WasmValueAssoc> WasmValueType for (A, B, C) {
+    fn into_values(self) -> Vec<Value> {
+        vec! [self.0.into(), self.1.into(), self.2.into()]
+    }
+
+    fn try_from_values(values: &[Value]) -> Option<Self> where Self: Sized {
+        Some((
+            TryInto::<A>::try_into(*values.get(0)?).ok()?,
+            TryInto::<B>::try_into(*values.get(1)?).ok()?,
+            TryInto::<C>::try_into(*values.get(2)?).ok()?,
+        ))
+    }
+}
+ */

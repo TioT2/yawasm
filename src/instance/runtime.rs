@@ -1,9 +1,7 @@
 use crate::{instruction, types::{self, Value}, util::binary_stream::BinaryInputStream, BlockExecutionResult, Instance};
 
-
 impl<'t> Instance<'t> {
-
-    fn call_by_id(&mut self, func_id: u32) -> Option<BlockExecutionResult> {
+    pub(crate) fn call_by_id(&mut self, func_id: u32) -> Option<BlockExecutionResult> {
         let func = self.module.functions.get(func_id as usize)?;
         let func_ty = self.module.types.get(func.type_id as usize)?;
 
@@ -223,8 +221,10 @@ impl<'t> Instance<'t> {
                 instruction::Instruction::I64Store8  => store!(u8,  stream.get::<u32>()? + pop!(as_u32), (pop!(as_u64) & 0x000000FF) as u8 ),
                 instruction::Instruction::I64Store16 => store!(u16, stream.get::<u32>()? + pop!(as_u32), (pop!(as_u64) & 0x0000FFFF) as u16),
                 instruction::Instruction::I64Store32 => store!(u32, stream.get::<u32>()? + pop!(as_u32), (pop!(as_u64) & 0xFFFFFFFF) as u32),
-                instruction::Instruction::MemorySize => {}
-                instruction::Instruction::MemoryGrow => {}
+                instruction::Instruction::MemorySize => push!(self.heap.len() as u32 / 65536),
+                instruction::Instruction::MemoryGrow => {
+
+                }
                 instruction::Instruction::I32Const => push!(stream.get::<i32>()?),
                 instruction::Instruction::I64Const => push!(stream.get::<i64>()?),
                 instruction::Instruction::F32Const => push!(stream.get::<f32>()?),
@@ -386,7 +386,6 @@ impl<'t> Instance<'t> {
 
         Some(BlockExecutionResult::Ok)
     }
-
 
     pub fn call(&mut self, name: &str, arguments: &[types::Value]) -> Option<Vec<types::Value>> {
         let export = self.module.exports.get(name)?;
