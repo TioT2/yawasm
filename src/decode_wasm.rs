@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use crate::{instruction, opcode, types, util::binary_stream::{BinaryInputStream, BinaryOutputStream}, Function, Module, ModuleCreateError, TableBranchData};
+use crate::{instruction, opcode, types::{self, ReferenceType}, util::binary_stream::{BinaryInputStream, BinaryOutputStream}, Function, Module, ModuleCreateError, TableBranchData};
 
 // Own binary stream implementation
 impl<'t> BinaryInputStream<'t> {
@@ -222,8 +222,7 @@ fn decode_expression(stream: &mut BinaryInputStream, table_branch_datas: &mut Ve
             }
             Opcode::I32Load | Opcode::I64Load | Opcode::F32Load | Opcode::F64Load | Opcode::I32Load8S | Opcode::I32Load8U | Opcode::I32Load16S | Opcode::I32Load16U |
             Opcode::I64Load16S | Opcode::I64Load16U | Opcode::I64Load8S | Opcode::I64Load8U | Opcode::I64Load32S | Opcode::I64Load32U | Opcode::I32Store | Opcode::I64Store |
-            Opcode::F32Store | Opcode::F64Store | Opcode::I32Store8 | Opcode::I32Store16 | Opcode::I64Store8 | Opcode::I64Store16 | Opcode::I64Store32
-            => {
+            Opcode::F32Store | Opcode::F64Store | Opcode::I32Store8 | Opcode::I32Store16 | Opcode::I64Store8 | Opcode::I64Store16 | Opcode::I64Store32 => {
                 let _align = stream.decode_unsigned().ok_or(ModuleCreateError::UnexpectedStreamEnd)? as u32;
                 let offset = stream.decode_unsigned().ok_or(ModuleCreateError::UnexpectedStreamEnd)? as u32;
 
@@ -239,6 +238,10 @@ fn decode_expression(stream: &mut BinaryInputStream, table_branch_datas: &mut Ve
             Opcode::GlobalGet | Opcode::GlobalSet | Opcode::TableGet | Opcode::TableSet | Opcode::I32Const => {
                 instruction_stream.write(&instruction.unwrap());
                 instruction_stream.write(&(stream.decode_unsigned().ok_or(ModuleCreateError::UnexpectedStreamEnd)? as u32));
+            }
+            Opcode::RefNull => {
+                instruction_stream.write(&instruction::Instruction::RefNull);
+                instruction_stream.write(&(types::ReferenceType::try_from(stream.get::<u8>().ok_or(ModuleCreateError::UnexpectedStreamEnd)?).map_err(|_| ModuleCreateError::WASMDeocdeError)? as u8));
             }
             // Vector and system instrucitons
             Opcode::Vector | Opcode::System => {
