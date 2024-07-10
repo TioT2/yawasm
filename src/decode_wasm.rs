@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use crate::{instruction, opcode, types::{self, ReferenceType}, util::binary_stream::{BinaryInputStream, BinaryOutputStream}, Function, Module, ModuleCreateError, TableBranchData};
+use crate::{instruction, opcode, types, util::binary_stream::{BinaryInputStream, BinaryOutputStream}, Function, Module, ModuleCreateError, TableBranchData};
 
 // Own binary stream implementation
 impl<'t> BinaryInputStream<'t> {
