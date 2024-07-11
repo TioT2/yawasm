@@ -1,7 +1,7 @@
 mod decode_wasm;
 mod opcode;
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap};
 
 use crate::{types, Expression, Function};
 
@@ -31,10 +31,6 @@ impl ModuleImpl {
             Source::WASM(bits) => Self::from_wasm(bits),
             Source::WAT(_) => Err(ModuleCreateError::Unknown),
         }
-    }
-
-    pub fn get_function_types(&self) -> &[types::FunctionType] {
-        &self.types
     }
 }
 

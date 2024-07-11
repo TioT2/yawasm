@@ -1,4 +1,4 @@
-use crate::{instruction, types::{self, Value}, util::binary_stream::BinaryInputStream, InstanceImpl};
+use crate::{instruction, types::{self, Value}, util::binary_stream::BinaryInputStream, InstanceImpl, ValueType};
 use super::BlockExecutionResult;
 
 impl InstanceImpl {
@@ -389,22 +389,17 @@ impl InstanceImpl {
         Some(BlockExecutionResult::Ok)
     }
 
-    pub fn call(&mut self, name: &str, arguments: &[types::Value]) -> Option<Vec<types::Value>> {
+    pub fn call(&mut self, id: u32, arguments: &[types::Value]) -> Option<Vec<types::Value>> {
         let module = self.module.clone();
-        let export = module.exports.get(name)?;
 
-        if export.ty != types::ExportType::Function {
-            return None;
-        }
-
-        let func = module.functions.get(export.index as usize)?;
+        let func = module.functions.get(id as usize)?;
         let func_ty = module.types.get(func.type_id as usize)?;
 
         for a in arguments {
             self.stack.push(*a);
         }
 
-        if let BlockExecutionResult::Branch { depth } = self.call_by_id(export.index)? {
+        if let BlockExecutionResult::Branch { depth } = self.call_by_id(id)? {
             if depth > 0 {
                 return None;
             }

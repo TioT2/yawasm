@@ -91,23 +91,101 @@ pub enum Value {
     ExternRef(u32),
 }
 
-macro_rules! value_impl_from {
-    ($src: ty, $arm: ident) => {
-        impl From<$src> for Value {
-            fn from(value: $src) -> Self {
-                Self::$arm(unsafe { std::mem::transmute(value) })
+pub trait NativeValue: Into<Value> + TryFrom<Value> + Sized {
+    const VALUE_TYPE: ValueType;
+}
+
+pub trait NativeValueSet: Sized {
+    const VALUE_TYPES: &'static [ValueType];
+
+    fn into_values(self) -> Vec<Value>;
+    fn try_from_values(values: &[Value]) -> Option<Self>;
+}
+
+impl<T: NativeValue> NativeValueSet for T {
+    const VALUE_TYPES: &'static [ValueType] = &[T::VALUE_TYPE];
+
+    fn into_values(self) -> Vec<Value> {
+        vec![ self.into() ]
+    }
+
+    fn try_from_values(values: &[Value]) -> Option<Self> {
+        (*values.get(0)?).try_into().ok()
+    }
+}
+
+macro_rules! impl_native_value_set {
+    ($($var_name: ident: $name: ident),*) => {
+        impl<$($name: NativeValue),*> NativeValueSet for ($($name),*) {
+            const VALUE_TYPES: &'static [ValueType] = &[ $($name::VALUE_TYPE),* ];
+
+            fn into_values(self) -> Vec<Value> {
+                let ($($var_name),*) = self;
+
+                vec![
+                    $($var_name.into()),*
+                ]
+            }
+
+            fn try_from_values(values: &[Value]) -> Option<Self> {
+                let [$($var_name),*] = values else {
+                    return None
+                };
+
+                return Some((
+                    $(TryInto::<$name>::try_into(*$var_name).ok()?),*
+                ))
             }
         }
     }
 }
 
-value_impl_from!(i32, I32);
-value_impl_from!(u32, I32);
-value_impl_from!(i64, I64);
-value_impl_from!(u64, I64);
-value_impl_from!(f32, F32);
-value_impl_from!(f64, F64);
-value_impl_from!(u128, V128);
+impl_native_value_set!(a: A, b: B);
+impl_native_value_set!(a: A, b: B, c: C);
+impl_native_value_set!(a: A, b: B, c: C, d: D);
+impl_native_value_set!(a: A, b: B, c: C, d: D, e: E);
+impl_native_value_set!(a: A, b: B, c: C, d: D, e: E, f: F);
+impl_native_value_set!(a: A, b: B, c: C, d: D, e: E, f: F, g: G);
+impl_native_value_set!(a: A, b: B, c: C, d: D, e: E, f: F, g: G, h: H);
+impl_native_value_set!(a: A, b: B, c: C, d: D, e: E, f: F, g: G, h: H, i: I);
+impl_native_value_set!(a: A, b: B, c: C, d: D, e: E, f: F, g: G, h: H, i: I, k: K);
+impl_native_value_set!(a: A, b: B, c: C, d: D, e: E, f: F, g: G, h: H, i: I, k: K, l: L);
+impl_native_value_set!(a: A, b: B, c: C, d: D, e: E, f: F, g: G, h: H, i: I, k: K, l: L, m: M);
+
+
+
+macro_rules! value_impl_from {
+    ($src: ty, $arm: ident, $value_type: expr) => {
+        impl From<$src> for Value {
+            fn from(value: $src) -> Self {
+                Self::$arm(unsafe { std::mem::transmute(value) })
+            }
+        }
+
+        impl TryFrom<Value> for $src {
+            type Error = ();
+
+            fn try_from(value: Value) -> Result<$src, Self::Error> {
+                match value {
+                    Value::$arm(v) => Ok(unsafe { std::mem::transmute(v) }),
+                    _ => Err(())
+                }
+            }
+        }
+
+        impl NativeValue for $src {
+            const VALUE_TYPE: ValueType = $value_type;
+        }
+    }
+}
+
+value_impl_from!(i32, I32, ValueType::Number(NumberType::I32));
+value_impl_from!(u32, I32, ValueType::Number(NumberType::I32));
+value_impl_from!(i64, I64, ValueType::Number(NumberType::I64));
+value_impl_from!(u64, I64, ValueType::Number(NumberType::I64));
+value_impl_from!(f32, F32, ValueType::Number(NumberType::F32));
+value_impl_from!(f64, F64, ValueType::Number(NumberType::F64));
+value_impl_from!(u128, V128, ValueType::Vector(VectorType::V128));
 
 macro_rules! value_impl_as {
     ($dst: ty, $name: ident, $mut_name: ident, $arm: ident) => {
@@ -126,7 +204,6 @@ macro_rules! value_impl_as {
                 None
             }
         }
-
     }
 }
 

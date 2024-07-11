@@ -6,7 +6,7 @@
   ;;   $x f32 - number to calculate fast inverse square root of
   ;; RETURNS:
   ;;   (f32) Fast inverse square root with one newtonian iteration of $x parameter
-  (func $f_inv_sqrt (param $x f32) (result f32)
+  (func $f_inv_sqrt (export "f_inv_sqrt") (param $x f32) (result f32)
     (local $v f32)
     
     i32.const 0x5F3759DF
@@ -18,7 +18,7 @@
     f32.reinterpret_i32
     local.set $v
 
-    ;; Multiply x by 0.5
+    ;; Multiply $x by 0.5
     local.get $x
     f32.const 0.5
     f32.mul
@@ -40,19 +40,12 @@
     return
   ) ;; func $f_inv_sqrt
 
-  (func $f_sign (param $x f32) (result f32)
-    (if (f32.gt (local.get $x) (f32.const 0))
-      (then
-        f32.const 1
-        return
-      )
-    )
-
-    f32.const -1
-    return
-  )
-
-  (func $vec3f_len2 (param $x f32) (param $y f32) (param $z f32) (result f32)
+  ;; 3-component vector length square calculation function
+  ;; ARGUMENTS:
+  ;;   $x $y $z f32 - vector components
+  ;; RETURNS:
+  ;;   (f32) <$x, $y, $z> vector length squared length
+  (func $vec3f_len2 (export "vec3f_len2") (param $x f32) (param $y f32) (param $z f32) (result f32)
     (f32.mul (local.get $x) (local.get $x))
     (f32.mul (local.get $y) (local.get $y))
     (f32.mul (local.get $z) (local.get $z))
@@ -60,19 +53,14 @@
     f32.add
 
     return
-  )
+  ) ;; func $vec3f_len2
 
-  (func $vec3f_len (param $x f32) (param $y f32) (param $z f32) (result f32)
-    (call $vec3f_len2
-      (local.get $x)
-      (local.get $y)
-      (local.get $z)
-    )
-    f32.sqrt
-    return
-  )
-
-  (func $vec3f_norm (param $x f32) (param $y f32) (param $z f32) (result f32 f32 f32)
+  ;; 3-component vector normalization function
+  ;; ARGUMENTS:
+  ;;   $x $y $z f32 - vector components
+  ;; RETURNS:
+  ;;   (f32 f32 f32) Vector with direction similar with <$x, $y, $z> but with unit length
+  (func $vec3f_norm (export "vec3f_norm") (param $x f32) (param $y f32) (param $z f32) (result f32 f32 f32)
     (local $inv_len f32)
 
     (call $vec3f_len2
@@ -88,11 +76,7 @@
     (f32.mul (local.get $z) (local.get $inv_len))
 
     return
-  )
+  ) ;; func $vec3f_norm)
+) ;; module
 
-  (export "vec3f_len2" (func $vec3f_len2))
-  (export "vec3f_len" (func $vec3f_len))
-  (export "f_inv_sqrt" (func $f_inv_sqrt))
-  (export "f_sign" (func $f_sign))
-  (export "vec3f_norm" (func $vec3f_norm))
-)
+;; file math.wat

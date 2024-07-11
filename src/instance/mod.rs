@@ -38,9 +38,3 @@ impl ModuleImpl {
     }
 
 }
-
-impl InstanceImpl {
-    pub fn get_module(&self) -> Arc<ModuleImpl> {
-        self.module.clone()
-    }
-}
