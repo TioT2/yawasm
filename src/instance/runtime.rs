@@ -1,9 +1,11 @@
-use crate::{instruction, types::{self, Value}, util::binary_stream::BinaryInputStream, BlockExecutionResult, Instance};
+use crate::{instruction, types::{self, Value}, util::binary_stream::BinaryInputStream, InstanceImpl};
+use super::BlockExecutionResult;
 
-impl<'t> Instance<'t> {
+impl InstanceImpl {
     pub(crate) fn call_by_id(&mut self, func_id: u32) -> Option<BlockExecutionResult> {
-        let func = self.module.functions.get(func_id as usize)?;
-        let func_ty = self.module.types.get(func.type_id as usize)?;
+        let module = self.module.clone();
+        let func = module.functions.get(func_id as usize)?;
+        let func_ty = module.types.get(func.type_id as usize)?;
 
         let mut locals = func_ty.inputs.iter()
             .map(|expected_type| -> Option<types::Value> {
@@ -18,7 +20,7 @@ impl<'t> Instance<'t> {
             .chain(func.locals.iter().map(|ty| Some(Value::default_with_type(*ty))))
             .collect::<Option<Vec<types::Value>>>()?;
 
-        if let BlockExecutionResult::Branch { depth } = self.exec_block(&func.expression, &mut locals)? {
+        if let BlockExecutionResult::Branch { depth } = self.exec_block(&func.expression.instructions, &mut locals)? {
             Some(BlockExecutionResult::Branch { depth: depth - 1 })
         } else {
             Some(BlockExecutionResult::Ok)
@@ -388,14 +390,15 @@ impl<'t> Instance<'t> {
     }
 
     pub fn call(&mut self, name: &str, arguments: &[types::Value]) -> Option<Vec<types::Value>> {
-        let export = self.module.exports.get(name)?;
+        let module = self.module.clone();
+        let export = module.exports.get(name)?;
 
         if export.ty != types::ExportType::Function {
             return None;
         }
 
-        let func = self.module.functions.get(export.index as usize)?;
-        let func_ty = self.module.types.get(func.type_id as usize)?;
+        let func = module.functions.get(export.index as usize)?;
+        let func_ty = module.types.get(func.type_id as usize)?;
 
         for a in arguments {
             self.stack.push(*a);

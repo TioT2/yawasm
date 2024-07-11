@@ -1,4 +1,3 @@
-
 // pub struct TypedFunction<Args: WasmValueType, Rets: WasmValueType> {
 //     func: Box<dyn Fn(&[types::Value]) -> Vec<types::Value>>,
 //     _phantom_data: PhantomData<fn(Args) -> Rets>,
@@ -12,9 +11,9 @@
 
 fn main() {
     let module = yawasm::Module::new(yawasm::Source::WASM(include_bytes!("../test/math.wasm"))).unwrap();
-    let mut instance = module.create_instance();
+    let instance = module.create_instance();
 
-    let mut wasm_vec3f_norm = |x: f32, y: f32, z: f32| -> (f32, f32, f32) {
+    let wasm_vec3f_norm = |x: f32, y: f32, z: f32| -> (f32, f32, f32) {
         let rs = instance.call("vec3f_norm", &[x.into(), y.into(), z.into()]).expect("No return values");
 
         if rs.len() != 3 {
@@ -28,7 +27,18 @@ fn main() {
         )
     };
 
-    println!("{:?}", wasm_vec3f_norm(3.0, 4.0, 5.0));
+    let wasm_f_inv_sqrt = |x: f32| -> f32 {
+        let rs = instance.call("f_inv_sqrt", &[x.into()]).expect("No return values");
+
+        if rs.len() != 1 {
+            panic!("Unexpected number of values returned");
+        }
+
+        rs[0].as_f32().expect("Float expected.")
+    };
+
+    println!("WASM f_inv_sqrt: {}", wasm_f_inv_sqrt(4.0));
+    println!("WASM vec3f_norm: {:?}", wasm_vec3f_norm(3.0, 4.0, 5.0));
 } // fn main
 
 // file main.rs

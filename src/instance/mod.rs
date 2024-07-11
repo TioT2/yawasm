@@ -1,10 +1,11 @@
 mod runtime;
 
-use crate::{types, Module};
+use std::sync::Arc;
 
+use crate::{types, ModuleImpl};
 
-pub struct Instance<'module> {
-    module: &'module Module,
+pub struct InstanceImpl {
+    module: Arc<ModuleImpl>,
     stack: Vec<types::Value>,
     heap: Vec<u8>,
     globals: Vec<types::Value>,
@@ -12,18 +13,18 @@ pub struct Instance<'module> {
 }
 
 /// Block execution result
-pub enum BlockExecutionResult {
+pub(super) enum BlockExecutionResult {
     Ok,
     Return,
     Branch { depth: u16 },
 }
 
-impl Module {
-    pub fn create_instance<'t>(&'t self) -> Instance<'t> {
-        let mut instance = Instance {
+impl ModuleImpl {
+    pub fn create_instance(self: &Arc<Self>) -> InstanceImpl {
+        let mut instance = InstanceImpl {
             globals: Vec::new(),
             heap: vec! [0; 65536],
-            module: self,
+            module: self.clone(),
             stack: Vec::new(),
             trapped: false,
         };
@@ -38,9 +39,8 @@ impl Module {
 
 }
 
-impl<'module> Instance<'module> {
-    pub fn get_module(&self) -> &Module {
-        &self.module
+impl InstanceImpl {
+    pub fn get_module(&self) -> Arc<ModuleImpl> {
+        self.module.clone()
     }
 }
-

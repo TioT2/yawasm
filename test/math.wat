@@ -52,21 +52,6 @@
     return
   )
 
-  (func $f_is_zero (param $x f32) (result i32)
-    (if (f32.eq (local.get $x) (f32.const 0))
-      (then
-        i32.const 1
-        return
-      )
-      (else
-        i32.const 0
-        return
-      )
-    )
-    i32.const 0xFFFFFFFF
-    return
-  )
-
   (func $vec3f_len2 (param $x f32) (param $y f32) (param $z f32) (result f32)
     (f32.mul (local.get $x) (local.get $x))
     (f32.mul (local.get $y) (local.get $y))
@@ -103,12 +88,11 @@
     (f32.mul (local.get $z) (local.get $inv_len))
 
     return
-)
+  )
 
   (export "vec3f_len2" (func $vec3f_len2))
   (export "vec3f_len" (func $vec3f_len))
   (export "f_inv_sqrt" (func $f_inv_sqrt))
   (export "f_sign" (func $f_sign))
-  (export "f_is_zero" (func $f_is_zero))
   (export "vec3f_norm" (func $vec3f_norm))
 )

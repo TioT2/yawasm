@@ -1,20 +1,18 @@
 use crate::types::{Limits, TableType};
 
 pub struct Table {
-    element_type: TableType,
-    max_size: Option<usize>,
+    ty: TableType,
     elements: Vec<u32>,
 }
 
 impl Table {
-    pub fn new(element_type: TableType, size: Limits, initial_value: Option<u32>) -> Option<Table> {
-        if !size.validate() {
+    pub fn new(ty: TableType, initial_value: Option<u32>) -> Option<Table> {
+        if !ty.limits.validate() {
             return None;
         }
         Some(Table {
-            element_type,
-            elements: vec! [initial_value.unwrap_or(0); size.min as usize],
-            max_size: size.max.map(|v| v as usize),
+            elements: vec! [initial_value.unwrap_or(0); ty.limits.min as usize],
+            ty,
         })
     }
 
@@ -27,11 +25,13 @@ impl Table {
     }
 
     pub fn grow(&mut self, by: u32) -> bool {
-        if let Some(max) = self.max_size {
-            if self.elements.len() + by as usize > max {
+        if let Some(max) = self.ty.limits.max {
+            if self.elements.len() + by as usize > max as usize {
                 return false;
             }
         }
+
+        self.elements.resize(self.elements.len() + by as usize, 0);
 
         return true;
     }

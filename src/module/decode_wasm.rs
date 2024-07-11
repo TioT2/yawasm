@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use crate::{instruction, types, util::binary_stream::{BinaryInputStream, BinaryOutputStream}, Function, TableBranchData};
-use super::{Module, ModuleCreateError, opcode};
+use super::{opcode, Expression, GlobalDescriptor, ModuleImpl, ModuleCreateError};
 
 // Own binary stream implementation
 impl<'t> BinaryInputStream<'t> {
@@ -136,7 +136,36 @@ fn decode_code_section(section: &[u8]) -> Result<Vec<&[u8]>, ModuleCreateError> 
         .collect::<Result<Vec<&[u8]>, ModuleCreateError>>()
 }
 
-fn decode_expression(stream: &mut BinaryInputStream, table_branch_datas: &mut Vec<TableBranchData>) -> Result<(Vec<u8>, u8), ModuleCreateError> {
+fn decode_global_section(section: &[u8]) -> Result<Vec<GlobalDescriptor>, ModuleCreateError> {
+    let mut stream = BinaryInputStream::new(section);
+
+    (0..stream.decode_unsigned().ok_or(ModuleCreateError::UnexpectedStreamEnd)?)
+        .map(|_| -> Result<GlobalDescriptor, ModuleCreateError> {
+            Ok(GlobalDescriptor {
+                value_type: types::ValueType::try_from(stream.get::<u8>().ok_or(ModuleCreateError::UnexpectedStreamEnd)?).map_err(|_| ModuleCreateError::WASMDeocdeError)?,
+                mutability: types::Mutability::try_from(stream.get::<u8>().ok_or(ModuleCreateError::UnexpectedStreamEnd)?).map_err(|_| ModuleCreateError::WASMDeocdeError)?,
+                expression: decode_expression(&mut stream)?,
+            })
+        })
+        .collect::<Result<Vec<GlobalDescriptor>, ModuleCreateError>>()
+}
+
+fn decode_expression(stream: &mut BinaryInputStream) -> Result<Expression, ModuleCreateError> {
+    let mut table_branch_datas = Vec::<TableBranchData>::new();
+
+    let (instructions, end) = decode_block(stream, &mut table_branch_datas)?;
+
+    if end != opcode::Main::ExpressionEnd as u8 {
+        return Err(ModuleCreateError::WASMDeocdeError);
+    }
+
+    return Ok(Expression {
+        table_branch_datas,
+        instructions,
+    })
+}
+
+fn decode_block(stream: &mut BinaryInputStream, table_branch_datas: &mut Vec<TableBranchData>) -> Result<(Vec<u8>, u8), ModuleCreateError> {
     let mut instruction_stream = BinaryOutputStream::new();
 
     let ending_byte = 'block_parsing_loop: loop {
@@ -156,7 +185,7 @@ fn decode_expression(stream: &mut BinaryInputStream, table_branch_datas: &mut Ve
                 // Requires block parsing
 
                 let ty = stream.wasm_decode_block_type().ok_or(ModuleCreateError::UnexpectedStreamEnd)?;
-                let (block_bits, ending_byte) = decode_expression(stream, table_branch_datas)?;
+                let (block_bits, ending_byte) = decode_block(stream, table_branch_datas)?;
 
                 instruction_stream.write(&instruction.unwrap());
 
@@ -168,7 +197,7 @@ fn decode_expression(stream: &mut BinaryInputStream, table_branch_datas: &mut Ve
                 instruction_stream.write_slice(&block_bits);
 
                 if opcode == Opcode::If && ending_byte == Opcode::Else as u8 {
-                    let (else_bits, ending_byte) = decode_expression(stream, table_branch_datas)?;
+                    let (else_bits, ending_byte) = decode_block(stream, table_branch_datas)?;
                     if ending_byte != Opcode::ExpressionEnd as u8 {
                         return Err(ModuleCreateError::WASMDeocdeError);
                     }
@@ -260,7 +289,7 @@ fn decode_expression(stream: &mut BinaryInputStream, table_branch_datas: &mut Ve
     ))
 }
 
-impl Module {
+impl ModuleImpl {
     pub fn from_wasm(src: &[u8]) -> Result<Self, ModuleCreateError> {
         // Sections
         let sections = decode_sections(src)?;
@@ -282,7 +311,7 @@ impl Module {
         } else {
             Vec::new()
         };
-        // Multimemory interactions aren't supported yet
+        // Multitable interactions aren't supported yet
         _ = tables;
 
         let memories = if let Some(bits) = sections.get(&types::SectionID::Memory) {
@@ -293,13 +322,11 @@ impl Module {
         // Multimemory interactions aren't supported yet
         _ = memories;
 
-        let globals: Vec<types::GlobalDescriptor> = if let Some(bits) = sections.get(&types::SectionID::Global) {
-            _ = bits;
-            todo!("Add global variable support");
+        let globals: Vec<GlobalDescriptor> = if let Some(bits) = sections.get(&types::SectionID::Global) {
+            decode_global_section(bits)?
         } else {
             Vec::new()
         };
-        _ = globals;
 
         let exports = if let Some(bits) = sections.get(&types::SectionID::Export) {
             decode_export_section(bits)?
@@ -330,35 +357,30 @@ impl Module {
 
             let mut stream = BinaryInputStream::new(code);
 
-            let mut locals = Vec::<types::ValueType>::new();
-
-            for _ in 0..stream.decode_unsigned().ok_or(ModuleCreateError::UnexpectedStreamEnd)? {
-                let count = stream.decode_unsigned().ok_or(ModuleCreateError::UnexpectedStreamEnd)?;
-                let ty: types::ValueType = (stream.get::<u8>().ok_or(ModuleCreateError::UnexpectedStreamEnd)?).try_into().map_err(|_| ModuleCreateError::WASMDeocdeError)?;
-
-                for _ in 0..count {
-                    locals.push(ty);
-                }
-            }
-
-            let mut table_branch_datas = Vec::<TableBranchData>::new();
-            let (expression, ending_byte) = decode_expression(&mut stream, &mut table_branch_datas)?;
-
-            if ending_byte != opcode::Main::ExpressionEnd as u8 {
-                return Err(ModuleCreateError::WASMDeocdeError);
-            }
-
             Ok(Function {
-                locals,
                 type_id,
-                expression,
-                table_branch_datas,
+                locals: {
+                    let mut locals = Vec::<types::ValueType>::new();
+
+                    for _ in 0..stream.decode_unsigned().ok_or(ModuleCreateError::UnexpectedStreamEnd)? {
+                        let count = stream.decode_unsigned().ok_or(ModuleCreateError::UnexpectedStreamEnd)?;
+                        let ty: types::ValueType = (stream.get::<u8>().ok_or(ModuleCreateError::UnexpectedStreamEnd)?).try_into().map_err(|_| ModuleCreateError::WASMDeocdeError)?;
+
+                        for _ in 0..count {
+                            locals.push(ty);
+                        }
+                    }
+
+                    locals
+                },
+                expression: decode_expression(&mut stream)?,
             })
         }).collect::<Result<Vec<Function>, ModuleCreateError>>()?;
 
-        Ok(Module {
+        Ok(ModuleImpl {
             exports,
             functions,
+            globals,
             imports: HashMap::new(),
             types: function_types,
             start,
