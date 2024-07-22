@@ -2,13 +2,14 @@ mod runtime;
 
 use std::sync::Arc;
 
-use crate::{types, ModuleImpl};
+use crate::{table::Table, types, Global, Memory, ModuleImpl, Value};
 
 pub struct InstanceImpl {
     module: Arc<ModuleImpl>,
     stack: Vec<types::Value>,
-    heap: Vec<u8>,
-    globals: Vec<types::Value>,
+    memory: Memory,
+    tables: Vec<Table>,
+    globals: Vec<Global>,
     trapped: bool,
 }
 
@@ -20,21 +21,33 @@ pub(super) enum BlockExecutionResult {
 }
 
 impl ModuleImpl {
-    pub fn create_instance(self: &Arc<Self>) -> InstanceImpl {
+    pub fn create_instance(self: &Arc<Self>) -> Option<InstanceImpl> {
         let mut instance = InstanceImpl {
             globals: Vec::new(),
-            heap: vec! [0; 65536],
+            memory: Memory::new(),
+            tables: self.tables
+                .iter()
+                .map(|ty| Table::new(*ty, None))
+                .collect::<Vec<Table>>(),
             module: self.clone(),
             stack: Vec::new(),
             trapped: false,
         };
+
+        // Setup globals
+        instance.globals = self.globals
+            .iter()
+            .map(|descriptor| Some(Global {
+                value: *instance.exec_expression(&descriptor.expression, &[descriptor.value_type])?.get(0)?,
+                mutability: descriptor.mutability,
+            }))
+            .collect::<Option<Vec<Global>>>()?;
 
         // Call setup function
         if let Some(start_id) = self.start {
             instance.call_by_id(start_id);
         }
 
-        instance
+        Some(instance)
     }
-
 }

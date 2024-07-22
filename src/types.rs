@@ -319,6 +319,7 @@ impl TryFrom<u8> for SectionID {
     }
 }
 
+#[derive(Copy, Clone)]
 pub struct TableType {
     pub reference_type: ReferenceType,
     pub limits: Limits,

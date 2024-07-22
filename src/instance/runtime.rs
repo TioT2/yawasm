@@ -1,5 +1,31 @@
-use crate::{instruction, types::{self, Value}, util::binary_stream::BinaryInputStream, InstanceImpl, ValueType};
+use crate::{instruction::{self, BlockType}, types::{self, FunctionType, Value}, util::binary_stream::BinaryInputStream, Expression, InstanceImpl, Memory, Mutability, NumberType, ValueType};
 use super::BlockExecutionResult;
+
+struct InputsOutputs {
+    binding: [ValueType; 1],
+}
+
+impl InputsOutputs {
+    pub fn new() -> Self {
+        InputsOutputs {
+            binding: [ValueType::Number(NumberType::F32)],
+        }
+    }
+
+    pub fn get<'t>(&'t mut self, ty: BlockType, types: &'t [FunctionType]) -> Option<(&'t [ValueType], &'t [ValueType])> {
+        Some(match ty {
+            instruction::BlockType::Functional(fnid) => {
+                let fn_ty = types.get(fnid as usize)?;
+                (fn_ty.inputs.as_slice(), fn_ty.outputs.as_slice())
+            },
+            instruction::BlockType::ResolvingTo(resolve_ty) => {
+                self.binding = [resolve_ty];
+                ([].as_slice(), self.binding.as_slice())
+            },
+            instruction::BlockType::Void => ([].as_slice(), [].as_slice()),
+        })
+    }
+}
 
 impl InstanceImpl {
     pub(crate) fn call_by_id(&mut self, func_id: u32) -> Option<BlockExecutionResult> {
@@ -20,21 +46,42 @@ impl InstanceImpl {
             .chain(func.locals.iter().map(|ty| Some(Value::default_with_type(*ty))))
             .collect::<Option<Vec<types::Value>>>()?;
 
-        if let BlockExecutionResult::Branch { depth } = self.exec_block(&func.expression.instructions, &mut locals)? {
+        if let BlockExecutionResult::Branch { depth } = self.exec_block(&[], &func_ty.outputs, &func.expression.instructions, &mut locals)? {
             Some(BlockExecutionResult::Branch { depth: depth - 1 })
         } else {
             Some(BlockExecutionResult::Ok)
         }
     }
 
-    fn exec_block(&mut self, block: &[u8], locals: &mut [types::Value]) -> Option<BlockExecutionResult> {
+    fn check_stack_top(&self, expected_top: &[ValueType]) -> Option<bool> {
+        Some(self.stack
+            .get(self.stack.len().checked_sub(expected_top.len())?..self.stack.len())?
+            .iter()
+            .zip(expected_top.iter())
+            .fold(true, |collector, (value, expected_type)| collector & (value.get_type() == *expected_type))
+        )
+    }
+
+    fn exec_block(&mut self, inputs: &[ValueType], outputs: &[ValueType], block: &[u8], locals: &mut [types::Value]) -> Option<BlockExecutionResult> {
         if self.trapped {
             panic!("Can't execute while trapped");
         }
 
         let mut stream = BinaryInputStream::new(block);
 
-        while let Some(byte) = stream.get::<u8>() {
+        // Validate inputs
+        if !self.check_stack_top(inputs).unwrap_or(false) {
+            return None;
+        }
+
+        let initial_stack_height = self.stack.len();
+
+        let exec_result = 'instruction_exec: loop {
+            let byte = match stream.get::<u8>() {
+                Some(v) => v,
+                None => break 'instruction_exec BlockExecutionResult::Ok,
+            };
+
             let instruction = instruction::Instruction::try_from(byte).expect(format!("Fatal error: unknown instruction {:02X}", byte).as_str());
 
             macro_rules! pop {
@@ -57,36 +104,18 @@ impl InstanceImpl {
             }
 
             macro_rules! load {
-                ($t: ty, $addr: expr) => {
-                    {
-                        let ptr = ($addr) as usize;
-                        if let Some(b) = self.heap.get(ptr..(ptr + std::mem::size_of::<$t>())) {
-                            *bytemuck::from_bytes::<$t>(b)
-                        } else {
-                            return None;
-                        }
-                    }
-                };
+                ($t: ty, $addr: expr) => { self.memory.load_unaligned::<$t>(($addr) as usize)? };
             }
 
             macro_rules! store {
-                ($t: ty, $addr: expr, $val: expr) => {
-                    {
-                        let ptr = ($addr) as usize;
-                        if let Some(b) = self.heap.get_mut(ptr..(ptr + std::mem::size_of::<$t>())) {
-                            *bytemuck::from_bytes_mut::<$t>(b) = $val;
-                        } else {
-                            return None;
-                        }
-                    }
-                };
+                ($t: ty, $addr: expr, $val: expr) => { self.memory.store::<$t>(($addr) as usize, $val)? };
             }
 
             macro_rules! exec_block {
-                ($code: expr, $locals: expr) => {
-                    match self.exec_block($code, $locals)? {
-                        BlockExecutionResult::Return => return Some(BlockExecutionResult::Return),
-                        BlockExecutionResult::Branch { depth } => if depth > 0 { return Some(BlockExecutionResult::Branch { depth: depth - 1 }) }
+                ($inputs: expr, $outputs: expr, $code: expr, $locals: expr) => {
+                    match self.exec_block($inputs, $outputs, $code, $locals)? {
+                        BlockExecutionResult::Return => break 'instruction_exec BlockExecutionResult::Return,
+                        BlockExecutionResult::Branch { depth } => if depth > 0 { break 'instruction_exec BlockExecutionResult::Branch { depth: depth - 1 } }
                         BlockExecutionResult::Ok => {}
                     }
                 };
@@ -94,10 +123,10 @@ impl InstanceImpl {
 
             match instruction {
                 instruction::Instruction::Unreachable => {
+                    // Works exactly as panic/exception
                     return None;
                 }
                 instruction::Instruction::Nop => {
-
                 }
                 instruction::Instruction::Block => {
                     let header = stream.get::<instruction::BlockHeader>()?;
@@ -105,7 +134,11 @@ impl InstanceImpl {
 
                     let stack_h = self.stack.len();
 
-                    exec_block!(code, locals);
+                    let mut inputs_outputs = InputsOutputs::new();
+                    let m = self.module.clone();
+                    let (inputs, outputs) = inputs_outputs.get(header.ty, &m.types)?;
+
+                    exec_block!(inputs, outputs, code, locals);
 
                     let exp_h = stack_h + match header.ty {
                         instruction::BlockType::Functional(i) => self.module.types[i as usize].outputs.len(),
@@ -113,7 +146,7 @@ impl InstanceImpl {
                         instruction::BlockType::Void => 0,
                     };
 
-                    if stack_h != exp_h { panic!("Unexpected height"); }
+                    if stack_h != exp_h { panic!("Unexpected stack height"); }
                 }
                 instruction::Instruction::Loop => {
 
@@ -122,8 +155,12 @@ impl InstanceImpl {
                     let header = stream.get::<instruction::BlockHeader>()?;
                     let code = stream.get_byte_slice(header.length as usize)?;
 
+                    let mut inputs_outputs = InputsOutputs::new();
+                    let m = self.module.clone();
+                    let (inputs, outputs) = inputs_outputs.get(header.ty, &m.types)?;
+
                     if pop!(as_u32) != 0 {
-                        exec_block!(code, locals);
+                        exec_block!(inputs, outputs, code, locals);
 
                         if stream.check::<u8>()? == instruction::Instruction::Else as u8 {
                             stream.skip(1)?;
@@ -133,11 +170,11 @@ impl InstanceImpl {
                     } else if stream.check::<u8>()? == instruction::Instruction::Else as u8 {
                         stream.skip(1)?;
                         let else_header = stream.get::<instruction::BlockHeader>()?;
-                        exec_block!(stream.get_byte_slice(else_header.length as usize)?, locals);
+                        exec_block!(inputs, outputs, stream.get_byte_slice(else_header.length as usize)?, locals);
                     }
                 }
                 instruction::Instruction::Else => {
-                    unreachable!("'Else' instruction must occur after 'If' instruction only.");
+                    panic!("'Else' instruction must occur after 'If' instruction only.");
                 }
                 instruction::Instruction::Br => {
 
@@ -146,16 +183,15 @@ impl InstanceImpl {
 
                 }
                 instruction::Instruction::Return => {
-                    return Some(BlockExecutionResult::Return);
+                    break 'instruction_exec BlockExecutionResult::Return;
                 }
                 instruction::Instruction::BrTable => {
 
                 }
                 instruction::Instruction::Call => {
                     match self.call_by_id(stream.get::<u32>()?)? {
-                        BlockExecutionResult::Branch { depth } => if depth > 0 { return Some(BlockExecutionResult::Branch { depth: depth - 1 }) }
-                        BlockExecutionResult::Ok | BlockExecutionResult::Return => {
-                        }
+                        BlockExecutionResult::Branch { depth } => if depth > 0 { break 'instruction_exec BlockExecutionResult::Branch { depth: depth - 1 } }
+                        BlockExecutionResult::Ok | BlockExecutionResult::Return => {  }
                     }
                 }
                 instruction::Instruction::CallIndirect => {}
@@ -189,21 +225,22 @@ impl InstanceImpl {
 
                     *l = v;
                 }
-                instruction::Instruction::GlobalGet => push!(*self.globals.get(stream.get::<u32>()? as usize)?),
+                instruction::Instruction::GlobalGet => push!(self.globals.get(stream.get::<u32>()? as usize)?.value),
                 instruction::Instruction::GlobalSet => {
                     let l = self.globals.get_mut(stream.get::<u32>()? as usize)?;
                     let v = pop!();
 
-                    if l.get_type() != v.get_type() {
+                    if l.mutability != Mutability::Mut || l.value.get_type() != v.get_type() {
                         return None;
                     }
-
-                    *l = v;
+                    l.value = v;
                 }
                 instruction::Instruction::TableGet => {}
                 instruction::Instruction::TableSet => {}
-                instruction::Instruction::I32Load | instruction::Instruction::F32Load => push!(load!(u32, stream.get::<u32>()? + pop!(as_u32))),
-                instruction::Instruction::I64Load | instruction::Instruction::F64Load => push!(load!(u64, stream.get::<u32>()? + pop!(as_u32))),
+                instruction::Instruction::I32Load => push!(load!(u32, stream.get::<u32>()? + pop!(as_u32))),
+                instruction::Instruction::F32Load => push!(load!(f32, stream.get::<u32>()? + pop!(as_u32))),
+                instruction::Instruction::I64Load => push!(load!(u64, stream.get::<u32>()? + pop!(as_u32))),
+                instruction::Instruction::F64Load => push!(load!(f64, stream.get::<u32>()? + pop!(as_u32))),
                 instruction::Instruction::I32Load8S  => push!(load!(i8,  stream.get::<u32>()? + pop!(as_u32)) as i32),
                 instruction::Instruction::I32Load8U  => push!(load!(u8,  stream.get::<u32>()? + pop!(as_u32)) as u32),
                 instruction::Instruction::I32Load16S => push!(load!(i16, stream.get::<u32>()? + pop!(as_u32)) as i32),
@@ -223,10 +260,18 @@ impl InstanceImpl {
                 instruction::Instruction::I64Store8  => store!(u8,  stream.get::<u32>()? + pop!(as_u32), (pop!(as_u64) & 0x000000FF) as u8 ),
                 instruction::Instruction::I64Store16 => store!(u16, stream.get::<u32>()? + pop!(as_u32), (pop!(as_u64) & 0x0000FFFF) as u16),
                 instruction::Instruction::I64Store32 => store!(u32, stream.get::<u32>()? + pop!(as_u32), (pop!(as_u64) & 0xFFFFFFFF) as u32),
-                instruction::Instruction::MemorySize => push!(self.heap.len() as u32 / 65536),
-                instruction::Instruction::MemoryGrow => {
+                instruction::Instruction::MemorySize => push!(self.memory.page_count() as u32),
 
+                // TODO Add memory grow failure
+                instruction::Instruction::MemoryGrow => {
+                    let size = self.memory.page_count();
+                    let page_count = pop!(as_u32) as usize;
+
+                    self.memory.grow(page_count);
+
+                    push!(size as u32);
                 }
+
                 instruction::Instruction::I32Const => push!(stream.get::<i32>()?),
                 instruction::Instruction::I64Const => push!(stream.get::<i64>()?),
                 instruction::Instruction::F32Const => push!(stream.get::<f32>()?),
@@ -384,12 +429,41 @@ impl InstanceImpl {
                 instruction::Instruction::System => todo!("TODO: Implement system instruction extension"),
                 instruction::Instruction::Vector => todo!("TODO: Implement vector instruction extension"),
             }
+        };
+
+        // validate returnvalues
+        if !self.check_stack_top(outputs).unwrap_or(false) {
+            None
+        } else {
+            let copy_range = (self.stack.len() - outputs.len())..self.stack.len();
+            let copy_dest = initial_stack_height - inputs.len();
+
+            // copy 'return' operands
+            self.stack.copy_within(copy_range, copy_dest);
+            // truncate stack
+            self.stack.truncate(copy_dest + outputs.len());
+
+            Some(exec_result)
+        }
+    } // fn exec_block
+
+
+    pub fn exec_expression(&mut self, expr: &Expression, expected_result: &[ValueType]) -> Option<Vec<Value>> {
+        if expected_result.len() > 1 {
+            panic!("TODO: fix expression execution...");
         }
 
-        Some(BlockExecutionResult::Ok)
+        self.exec_block(&[], expected_result, &expr.instructions, &mut []);
+
+        return self.stack
+            .get(self.stack.len().checked_sub(expected_result.len())?..self.stack.len())?
+            .iter()
+            .zip(expected_result.iter())
+            .map(|(elem, ty)| if elem.get_type() == *ty { Some(*elem) } else { None })
+            .collect::<Option<Vec<Value>>>()
     }
 
-    pub fn call(&mut self, id: u32, arguments: &[types::Value]) -> Option<Vec<types::Value>> {
+    pub fn call(&mut self, id: u32, arguments: &[Value]) -> Option<Vec<Value>> {
         let module = self.module.clone();
 
         let func = module.functions.get(id as usize)?;

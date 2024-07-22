@@ -6,14 +6,11 @@ pub struct Table {
 }
 
 impl Table {
-    pub fn new(ty: TableType, initial_value: Option<u32>) -> Option<Table> {
-        if !ty.limits.validate() {
-            return None;
-        }
-        Some(Table {
+    pub fn new(ty: TableType, initial_value: Option<u32>) -> Table {
+        Table {
             elements: vec! [initial_value.unwrap_or(0); ty.limits.min as usize],
             ty,
-        })
+        }
     }
 
     pub fn get(&self, index: u32) -> Option<u32> {

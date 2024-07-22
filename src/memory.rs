@@ -19,6 +19,35 @@ impl Memory {
         return Memory { ptr, page_count: 1 };
     }
 
+    pub fn size(&self) -> usize {
+        self.page_count * WASM_PAGE_SIZE
+    }
+
+    pub fn page_count(&self) -> usize {
+        self.page_count
+    }
+
+    pub fn load_unaligned<T: bytemuck::AnyBitPattern>(&self, ptr: usize) -> Option<T> {
+        if ptr + std::mem::size_of::<T>() < self.page_count * WASM_PAGE_SIZE {
+            Some(unsafe {
+                std::mem::transmute::<*mut u8, *mut T>(self.ptr.add(ptr)).read_unaligned()
+            })
+        } else {
+            None
+        }
+    }
+
+    pub fn store<T: bytemuck::AnyBitPattern>(&self, ptr: usize, data: T) -> Option<()> {
+        if ptr + std::mem::size_of::<T>() < self.page_count * WASM_PAGE_SIZE {
+            unsafe {
+                std::mem::transmute::<*mut u8, *mut T>(self.ptr.add(ptr)).write(data)
+            }
+            Some(())
+        } else {
+            None
+        }
+    }
+
     pub fn grow(&mut self, grow_page_count: usize) {
         let new_page_count = self.page_count + grow_page_count;
         let new_alloc_layout = std::alloc::Layout::from_size_align(new_page_count * WASM_PAGE_SIZE, ALLOCATION_ALIGNMENT).unwrap();

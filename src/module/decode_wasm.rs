@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use crate::{instruction, types, util::binary_stream::{BinaryInputStream, BinaryOutputStream}, Function, TableBranchData};
+use crate::{instruction, types, util::binary_stream::{BinaryInputStream, BinaryOutputStream}, Function, NativeValue, ValueType};
 use super::{opcode, Expression, GlobalDescriptor, ModuleImpl, ModuleCreateError};
 
 // Own binary stream implementation
@@ -79,8 +79,11 @@ fn decode_function_section(section: &[u8]) -> Result<Vec<u32>, ModuleCreateError
     (0..stream.decode_unsigned().ok_or(ModuleCreateError::UnexpectedStreamEnd)?)
         .map(|_| stream.decode_unsigned().map(|v| v as u32).ok_or(ModuleCreateError::UnexpectedStreamEnd))
         .collect::<Result<Vec<u32>, ModuleCreateError>>()
-}
+} // fn decode_function_section
 
+/// Table section decode function
+/// * `section` - binary section contents
+/// * Returns vector of table types or module create error
 fn decode_table_section(section: &[u8]) -> Result<Vec<types::TableType>, ModuleCreateError> {
     let mut stream = BinaryInputStream::new(section);
 
@@ -90,16 +93,22 @@ fn decode_table_section(section: &[u8]) -> Result<Vec<types::TableType>, ModuleC
             limits: stream.wasm_decode_limits().ok_or(ModuleCreateError::WASMDeocdeError)?,
         }))
         .collect::<Result<Vec<types::TableType>, ModuleCreateError>>()
-}
+} // fn decode_table_section
 
+/// Memory section decode function
+/// * `section` - binary section contents
+/// * Returns vector of memory size limits or module create error
 fn decode_memory_section(section: &[u8]) -> Result<Vec<types::Limits>, ModuleCreateError> {
     let mut stream = BinaryInputStream::new(section);
 
     (0..stream.decode_unsigned().ok_or(ModuleCreateError::UnexpectedStreamEnd)?)
         .map(|_| stream.wasm_decode_limits().ok_or(ModuleCreateError::WASMDeocdeError))
         .collect::<Result<Vec<types::Limits>, ModuleCreateError>>()
-}
+} // fn decode_memory_section
 
+/// Export section decode function
+/// * `section` - binary section contents
+/// * Returns hashmap of export object descriptors by exported names or module create error
 fn decode_export_section(section: &[u8]) -> Result<HashMap<String, types::ExportDescriptor>, ModuleCreateError> {
     let mut stream = BinaryInputStream::new(section);
 
@@ -115,14 +124,17 @@ fn decode_export_section(section: &[u8]) -> Result<HashMap<String, types::Export
             }))
         })
         .collect::<Result<HashMap<String, types::ExportDescriptor>, ModuleCreateError>>()
-}
+} // fn decode_export_section
 
+/// Start section decode function
+/// * `section` - binary section contents
+/// * Returns index of start section decoding or module create error
 fn decode_start_section(section: &[u8]) -> Result<u32, ModuleCreateError> {
     BinaryInputStream::new(section)
         .decode_unsigned()
         .map(|v| v as u32)
         .ok_or(ModuleCreateError::UnexpectedStreamEnd)
-}
+} // fn decode_start_section
 
 fn decode_code_section(section: &[u8]) -> Result<Vec<&[u8]>, ModuleCreateError> {
     let mut stream = BinaryInputStream::new(section);
@@ -151,21 +163,28 @@ fn decode_global_section(section: &[u8]) -> Result<Vec<GlobalDescriptor>, Module
 }
 
 fn decode_expression(stream: &mut BinaryInputStream) -> Result<Expression, ModuleCreateError> {
-    let mut table_branch_datas = Vec::<TableBranchData>::new();
-
-    let (instructions, end) = decode_block(stream, &mut table_branch_datas)?;
+    let (instructions, end) = decode_block(stream)?;
 
     if end != opcode::Main::ExpressionEnd as u8 {
         return Err(ModuleCreateError::WASMDeocdeError);
     }
 
-    return Ok(Expression {
-        table_branch_datas,
-        instructions,
-    })
+    return Ok(Expression { instructions })
 }
 
-fn decode_block(stream: &mut BinaryInputStream, table_branch_datas: &mut Vec<TableBranchData>) -> Result<(Vec<u8>, u8), ModuleCreateError> {
+fn decode_block_validated(stream: &mut BinaryInputStream) -> Result<(Vec<u8>, u8), ModuleCreateError> {
+    let mut type_stack = Vec::<ValueType>::new();
+
+    let mut instruction_stream = BinaryOutputStream::new();
+
+    let ending_byte = 'block_parsing_loop: loop {
+
+    };
+
+    Err((ModuleCreateError::Unknown))
+}
+
+fn decode_block(stream: &mut BinaryInputStream) -> Result<(Vec<u8>, u8), ModuleCreateError> {
     let mut instruction_stream = BinaryOutputStream::new();
 
     let ending_byte = 'block_parsing_loop: loop {
@@ -185,7 +204,7 @@ fn decode_block(stream: &mut BinaryInputStream, table_branch_datas: &mut Vec<Tab
                 // Requires block parsing
 
                 let ty = stream.wasm_decode_block_type().ok_or(ModuleCreateError::UnexpectedStreamEnd)?;
-                let (block_bits, ending_byte) = decode_block(stream, table_branch_datas)?;
+                let (block_bits, ending_byte) = decode_block(stream)?;
 
                 instruction_stream.write(&instruction.unwrap());
 
@@ -197,7 +216,7 @@ fn decode_block(stream: &mut BinaryInputStream, table_branch_datas: &mut Vec<Tab
                 instruction_stream.write_slice(&block_bits);
 
                 if opcode == Opcode::If && ending_byte == Opcode::Else as u8 {
-                    let (else_bits, ending_byte) = decode_block(stream, table_branch_datas)?;
+                    let (else_bits, ending_byte) = decode_block(stream)?;
                     if ending_byte != Opcode::ExpressionEnd as u8 {
                         return Err(ModuleCreateError::WASMDeocdeError);
                     }
@@ -213,22 +232,15 @@ fn decode_block(stream: &mut BinaryInputStream, table_branch_datas: &mut Vec<Tab
             Opcode::BrTable => {
                 // Parse branch table
                 instruction_stream.write(&instruction::Instruction::BrTable);
-                instruction_stream.write(&(table_branch_datas.len() as u32));
 
-                // Parse table branch data
-                table_branch_datas.push(TableBranchData {
-                    labels: (0..stream.decode_unsigned().ok_or(ModuleCreateError::UnexpectedStreamEnd)?)
-                        .map(|_| stream
-                            .decode_unsigned()
-                            .map(|v| v as u32)
-                            .ok_or(ModuleCreateError::UnexpectedStreamEnd)
-                        )
-                        .collect::<Result<Vec<u32>, ModuleCreateError>>()?,
+                let label_count = stream.decode_unsigned().ok_or(ModuleCreateError::UnexpectedStreamEnd)? as u32;
 
-                    default: stream
-                        .decode_unsigned()
-                        .ok_or(ModuleCreateError::UnexpectedStreamEnd)? as u32,
-                });
+                // Write label count
+                instruction_stream.write(&label_count);
+                // Write labels and default
+                for _ in 0..(label_count + 1) {
+                    instruction_stream.write(&(stream.decode_unsigned().ok_or(ModuleCreateError::UnexpectedStreamEnd)? as u32));
+                }
             }
             Opcode::CallIndirect => {
                 let ty = stream.decode_unsigned().ok_or(ModuleCreateError::UnexpectedStreamEnd)? as u32;
@@ -311,16 +323,12 @@ impl ModuleImpl {
         } else {
             Vec::new()
         };
-        // Multitable interactions aren't supported yet
-        _ = tables;
 
         let memories = if let Some(bits) = sections.get(&types::SectionID::Memory) {
             decode_memory_section(bits)?
         } else {
             Vec::new()
         };
-        // Multimemory interactions aren't supported yet
-        _ = memories;
 
         let globals: Vec<GlobalDescriptor> = if let Some(bits) = sections.get(&types::SectionID::Global) {
             decode_global_section(bits)?
@@ -381,6 +389,8 @@ impl ModuleImpl {
             exports,
             functions,
             globals,
+            tables,
+            memories,
             imports: HashMap::new(),
             types: function_types,
             start,
