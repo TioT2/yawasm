@@ -1,4 +1,4 @@
-use crate::{instruction::{self, BlockType}, types::{self, FunctionType, Value}, util::binary_stream::BinaryInputStream, Expression, InstanceImpl, Memory, Mutability, NumberType, ValueType};
+use crate::{instruction::{self, BlockType}, types::{self, FunctionType, Value}, util::binary_stream::BinaryInputStream, Expression, InstanceImpl, Mutability, NumberType, ValueType};
 use super::BlockExecutionResult;
 
 struct InputsOutputs {

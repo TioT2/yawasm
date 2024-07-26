@@ -1,9 +1,5 @@
 extern crate yawasm;
 
-pub fn print_u32(a: u32) {
-
-}
-
 fn main() {
     let instance = yawasm::Module::new(yawasm::Source::WASM(include_bytes!("../test/math.wasm")))
         .expect("Error creating module")
