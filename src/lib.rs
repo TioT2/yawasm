@@ -13,7 +13,7 @@ pub(crate) use instance::InstanceImpl;
 
 pub use module::{ModuleCreateError, Source};
 pub use memory::Memory;
-pub use types::{Value, ValueType, Mutability, Limits, ReferenceType, NumberType, ExportType, NativeValue, NativeValueSet};
+pub use types::{Value, Type, Mutability, Limits, ReferenceType, NumberType, ExportType, NativeValue, NativeValueSet};
 
 /// Expression internal representation structure
 pub(crate) struct Expression {
@@ -23,7 +23,7 @@ pub(crate) struct Expression {
 
 pub(crate) struct Function {
     pub type_id: u32,
-    pub locals: Vec<types::ValueType>,
+    pub locals: Vec<Type>,
     pub expression: Expression,
 }
 

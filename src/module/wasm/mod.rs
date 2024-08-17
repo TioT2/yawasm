@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use block_decode::decode_block;
 
-use crate::{instruction, types, util::binary_stream::{BinaryInputStream, BinaryOutputStream}, Function};
+use crate::{instruction, types, util::binary_stream::{BinaryInputStream, BinaryOutputStream}, Function, Type};
 use super::{opcode, Expression, GlobalDescriptor, ModuleImpl};
 
 
@@ -16,7 +16,7 @@ pub enum EnumType {
     ReferenceType,
     ExportType,
     Mutability,
-    ValueType,
+    Type,
 }
 
 impl std::fmt::Display for EnumType {
@@ -28,7 +28,7 @@ impl std::fmt::Display for EnumType {
             Self::ReferenceType => "reference type",
             Self::ExportType => "export type",
             Self::Mutability => "mutability",
-            Self::ValueType => "value type",
+            Self::Type => "value type",
         })
     }
 }
@@ -82,11 +82,22 @@ pub enum CodeValidationError {
     InvalidMemoryInstructionData,
     UnknownFunctionTypeIndex,
     UnknownFunctionIndex,
+    UnknownLocalIndex,
+    UnknownGlobalIndex,
+
+    UnexpectedElseOpcode,
+    InvalidBranchDepth,
+    NoOperands,
+    MutatingConstantGlobal,
+    UnexpectedOperandType {
+        expected: Type,
+        actual: Type,
+    },
 }
 
-impl Into<DecodeError> for CodeValidationError {
-    fn into(self) -> DecodeError {
-        todo!()
+impl From<CodeValidationError> for DecodeError {
+    fn from(value: CodeValidationError) -> Self {
+        Self::CodeValidationError(value)
     }
 }
 
@@ -118,12 +129,16 @@ impl<'t> BinaryInputStream<'t> {
         Ok(if byte == 0x40 {
             self.skip(1).unwrap();
             instruction::BlockType::Void
-        } else if let Ok(val_type) = types::ValueType::try_from(byte) {
+        } else if let Ok(val_type) = types::Type::try_from(byte) {
             self.skip(1).unwrap();
             instruction::BlockType::ResolvingTo(val_type)
         } else {
             instruction::BlockType::Functional(self.decode_signed::<32>().ok_or(DecodeError::SignedDecodeError { bit_count: 32 })? as u32)
         })
+    }
+
+    pub fn wasm_decode_unsigned(&mut self) -> Result<usize, DecodeError> {
+        self.decode_unsigned().ok_or(DecodeError::UnsignedDecodeError)
     }
 }
 
@@ -158,7 +173,7 @@ fn decode_function_type_section(section: &[u8]) -> Result<Vec<types::FunctionTyp
                 return Err(DecodeError::InvalidModuleMagic);
             }
 
-            const DECODE_FUNC: &'static dyn Fn(&u8) -> Option<types::ValueType> = &|v: &u8| types::ValueType::try_from(*v).ok();
+            const DECODE_FUNC: &'static dyn Fn(&u8) -> Option<Type> = &|v: &u8| Type::try_from(*v).ok();
 
             Ok(types::FunctionType {
                 inputs: stream.wasm_decode_vector(DECODE_FUNC).ok_or(DecodeError::UnexpectedStreamEnd)?,
@@ -259,7 +274,7 @@ fn decode_global_section(section: &[u8]) -> Result<Vec<GlobalDescriptor>, Decode
             let mut_byte = stream.get::<u8>().ok_or(DecodeError::UnexpectedStreamEnd)?;
 
             Ok(GlobalDescriptor {
-                value_type: types::ValueType::try_from(type_byte).map_err(|_| EnumType::ValueType.as_decode_error(type_byte))?,
+                value_type: Type::try_from(type_byte).map_err(|_| EnumType::Type.as_decode_error(type_byte))?,
                 mutability: types::Mutability::try_from(mut_byte).map_err(|_| EnumType::Mutability.as_decode_error(mut_byte))?,
                 expression: decode_expression(&mut stream)?,
             })
@@ -344,12 +359,12 @@ impl ModuleImpl {
             Ok(Function {
                 type_id,
                 locals: {
-                    let mut locals = Vec::<types::ValueType>::new();
+                    let mut locals = Vec::<Type>::new();
 
                     for _ in 0..stream.decode_unsigned().ok_or(DecodeError::UnsignedDecodeError)? {
                         let local_repeat_count = stream.decode_unsigned().ok_or(DecodeError::UnsignedDecodeError)?;
                         let valtype_byte = stream.get::<u8>().ok_or(DecodeError::UnexpectedStreamEnd)?;
-                        let ty: types::ValueType = valtype_byte.try_into().map_err(|_| EnumType::ValueType.as_decode_error(valtype_byte))?;
+                        let ty: Type = valtype_byte.try_into().map_err(|_| EnumType::Type.as_decode_error(valtype_byte))?;
 
                         locals.extend(std::iter::repeat(ty).take(local_repeat_count));
                     }

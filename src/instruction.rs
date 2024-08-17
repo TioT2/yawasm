@@ -1,9 +1,9 @@
-use crate::types;
+use crate::Type;
 
 #[derive(Copy, Clone, PartialEq)]
 pub enum BlockType {
     Void,
-    ResolvingTo(types::ValueType),
+    ResolvingTo(Type),
     Functional(u32),
 }
 
@@ -19,6 +19,46 @@ pub struct BlockHeader {
 unsafe impl bytemuck::Zeroable for BlockHeader {}
 unsafe impl bytemuck::AnyBitPattern for BlockHeader {}
 unsafe impl bytemuck::NoUninit for BlockHeader {}
+
+#[derive(Copy, Clone)]
+pub struct BlindBlockHeader {
+    /// number of values 'consumed' from stack
+    pub consume_count: u16,
+    /// number of values 'outputted' into stack
+    pub output_count: u16,
+    /// block code length
+    pub length: u32,
+}
+
+unsafe impl bytemuck::Zeroable for BlindBlockHeader {}
+unsafe impl bytemuck::AnyBitPattern for BlindBlockHeader {}
+unsafe impl bytemuck::NoUninit for BlindBlockHeader {}
+
+#[derive(Copy, Clone)]
+pub struct BlindBranchHeader {
+    /// number of values 'consumed' from stack
+    pub consume_count: u16,
+    /// number of values 'outputted' into stack
+    pub output_count: u16,
+    /// then case length
+    pub then_length: u32,
+    /// else case length
+    pub else_length: u32,
+}
+
+unsafe impl bytemuck::Zeroable for BlindBranchHeader {}
+unsafe impl bytemuck::AnyBitPattern for BlindBranchHeader {}
+unsafe impl bytemuck::NoUninit for BlindBranchHeader {}
+
+#[derive(Copy, Clone)]
+pub struct TableBranchHeader {
+    /// number of variants of branch header
+    pub variant_count: u32,
+}
+
+unsafe impl bytemuck::Zeroable for TableBranchHeader {}
+unsafe impl bytemuck::AnyBitPattern for TableBranchHeader {}
+unsafe impl bytemuck::NoUninit for TableBranchHeader {}
 
 unsafe impl bytemuck::NoUninit for Instruction {}
 

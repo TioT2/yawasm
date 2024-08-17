@@ -1,18 +1,18 @@
-use crate::{instruction::{self, BlockType}, types::{self, FunctionType, Value}, util::binary_stream::BinaryInputStream, Expression, InstanceImpl, Mutability, NumberType, ValueType};
+use crate::{instruction::{self, BlockType}, types::{self, FunctionType, Value}, util::binary_stream::BinaryInputStream, Expression, InstanceImpl, Mutability, NumberType, Type};
 use super::BlockExecutionResult;
 
 struct InputsOutputs {
-    binding: [ValueType; 1],
+    binding: [Type; 1],
 }
 
 impl InputsOutputs {
     pub fn new() -> Self {
         InputsOutputs {
-            binding: [ValueType::Number(NumberType::F32)],
+            binding: [Type::F32],
         }
     }
 
-    pub fn get<'t>(&'t mut self, ty: BlockType, types: &'t [FunctionType]) -> Option<(&'t [ValueType], &'t [ValueType])> {
+    pub fn get<'t>(&'t mut self, ty: BlockType, types: &'t [FunctionType]) -> Option<(&'t [Type], &'t [Type])> {
         Some(match ty {
             instruction::BlockType::Functional(fnid) => {
                 let fn_ty = types.get(fnid as usize)?;
@@ -53,7 +53,7 @@ impl InstanceImpl {
         }
     }
 
-    fn check_stack_top(&self, expected_top: &[ValueType]) -> Option<bool> {
+    fn check_stack_top(&self, expected_top: &[Type]) -> Option<bool> {
         Some(self.stack
             .get(self.stack.len().checked_sub(expected_top.len())?..self.stack.len())?
             .iter()
@@ -62,7 +62,7 @@ impl InstanceImpl {
         )
     }
 
-    fn exec_block(&mut self, inputs: &[ValueType], outputs: &[ValueType], block: &[u8], locals: &mut [types::Value]) -> Option<BlockExecutionResult> {
+    fn exec_block(&mut self, inputs: &[Type], outputs: &[Type], block: &[u8], locals: &mut [Value]) -> Option<BlockExecutionResult> {
         if self.trapped {
             panic!("Can't execute while trapped");
         }
@@ -413,7 +413,7 @@ impl InstanceImpl {
                 instruction::Instruction::I64Extend8S  => *top!() = (unsafe { std::mem::transmute::< u8,  i8>((top!(as_u64) & 0x000000FF) as  u8) } as i64).into(),
                 instruction::Instruction::I64Extend16S => *top!() = (unsafe { std::mem::transmute::<u16, i16>((top!(as_u64) & 0x0000FFFF) as u16) } as i64).into(),
                 instruction::Instruction::I64Extend32S => *top!() = (unsafe { std::mem::transmute::<u32, i32>((top!(as_u64) & 0xFFFFFFFF) as u32) } as i64).into(),
-                instruction::Instruction::RefNull => push!(Value::default_with_type(types::ValueType::Reference(types::ReferenceType::try_from(stream.get::<u8>()?).ok()?))),
+                instruction::Instruction::RefNull => push!(Value::default_with_type(types::ReferenceType::try_from(stream.get::<u8>()?).ok()?.into())),
                 instruction::Instruction::RefIsNull => {
                     let t = top!();
 
@@ -448,7 +448,7 @@ impl InstanceImpl {
     } // fn exec_block
 
 
-    pub fn exec_expression(&mut self, expr: &Expression, expected_result: &[ValueType]) -> Option<Vec<Value>> {
+    pub fn exec_expression(&mut self, expr: &Expression, expected_result: &[Type]) -> Option<Vec<Value>> {
         if expected_result.len() > 1 {
             panic!("TODO: fix expression execution...");
         }

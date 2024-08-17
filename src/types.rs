@@ -1,11 +1,11 @@
 
 #[derive(PartialEq)]
 pub struct FunctionType {
-    pub inputs: Vec<ValueType>,
-    pub outputs: Vec<ValueType>,
+    pub inputs: Vec<Type>,
+    pub outputs: Vec<Type>,
 }
 
-#[derive(Copy, Clone, Hash, PartialEq, Eq)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
 pub enum NumberType {
     I32 = 0x7F,
     I64 = 0x7E,
@@ -23,7 +23,7 @@ impl TryFrom<u8> for NumberType {
     }
 }
 
-#[derive(Copy, Clone, Hash, PartialEq, Eq)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
 pub enum VectorType {
     V128,
 }
@@ -39,7 +39,7 @@ impl TryFrom<u8> for VectorType {
     }
 }
 
-#[derive(Copy, Clone, Hash, PartialEq, Eq)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
 pub enum ReferenceType {
     Extern = 0x6F,
     Func = 0x70,
@@ -56,25 +56,38 @@ impl TryFrom<u8> for ReferenceType {
     }
 }
 
-#[derive(Copy, Clone, Hash, PartialEq, Eq)]
-pub enum ValueType {
-    Number(NumberType),
-    Vector(VectorType),
-    Reference(ReferenceType),
+impl Into<Type> for ReferenceType {
+    fn into(self) -> Type {
+        match self {
+            ReferenceType::Extern => Type::ExternRef,
+            ReferenceType::Func => Type::FuncRef,
+        }
+    }
 }
 
-impl TryFrom<u8> for ValueType {
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub enum Type {
+    I32,
+    I64,
+    F32,
+    F64,
+    V128,
+    ExternRef,
+    FuncRef,
+}
+
+impl TryFrom<u8> for Type {
     type Error = ();
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
-            0x6F => Ok(ValueType::Reference(ReferenceType::Extern)),
-            0x70 => Ok(ValueType::Reference(ReferenceType::Func)),
-            0x7B => Ok(ValueType::Vector(VectorType::V128)),
-            0x7F => Ok(ValueType::Number(NumberType::I32)),
-            0x7E => Ok(ValueType::Number(NumberType::I64)),
-            0x7D => Ok(ValueType::Number(NumberType::F32)),
-            0x7C => Ok(ValueType::Number(NumberType::F64)),
+            0x6F => Ok(Type::ExternRef),
+            0x70 => Ok(Type::FuncRef),
+            0x7B => Ok(Type::V128),
+            0x7F => Ok(Type::I32),
+            0x7E => Ok(Type::I64),
+            0x7D => Ok(Type::F32),
+            0x7C => Ok(Type::F64),
             _ => Err(()),
         }
     }
@@ -92,18 +105,18 @@ pub enum Value {
 }
 
 pub trait NativeValue: Into<Value> + TryFrom<Value> + Sized {
-    const VALUE_TYPE: ValueType;
+    const VALUE_TYPE: Type;
 }
 
 pub trait NativeValueSet: Sized {
-    const VALUE_TYPES: &'static [ValueType];
+    const VALUE_TYPES: &'static [Type];
 
     fn into_values(self) -> Vec<Value>;
     fn try_from_values(values: &[Value]) -> Option<Self>;
 }
 
 impl<T: NativeValue> NativeValueSet for T {
-    const VALUE_TYPES: &'static [ValueType] = &[T::VALUE_TYPE];
+    const VALUE_TYPES: &'static [Type] = &[T::VALUE_TYPE];
 
     fn into_values(self) -> Vec<Value> {
         vec![ self.into() ]
@@ -117,7 +130,7 @@ impl<T: NativeValue> NativeValueSet for T {
 macro_rules! impl_native_value_set {
     ($($var_name: ident: $name: ident),*) => {
         impl<$($name: NativeValue),*> NativeValueSet for ($($name),*) {
-            const VALUE_TYPES: &'static [ValueType] = &[ $($name::VALUE_TYPE),* ];
+            const VALUE_TYPES: &'static [Type] = &[ $($name::VALUE_TYPE),* ];
 
             fn into_values(self) -> Vec<Value> {
                 let ($($var_name),*) = self;
@@ -174,18 +187,18 @@ macro_rules! value_impl_from {
         }
 
         impl NativeValue for $src {
-            const VALUE_TYPE: ValueType = $value_type;
+            const VALUE_TYPE: Type = $value_type;
         }
     }
 }
 
-value_impl_from!(i32, I32, ValueType::Number(NumberType::I32));
-value_impl_from!(u32, I32, ValueType::Number(NumberType::I32));
-value_impl_from!(i64, I64, ValueType::Number(NumberType::I64));
-value_impl_from!(u64, I64, ValueType::Number(NumberType::I64));
-value_impl_from!(f32, F32, ValueType::Number(NumberType::F32));
-value_impl_from!(f64, F64, ValueType::Number(NumberType::F64));
-value_impl_from!(u128, V128, ValueType::Vector(VectorType::V128));
+value_impl_from!(i32, I32, Type::I32);
+value_impl_from!(u32, I32, Type::I32);
+value_impl_from!(i64, I64, Type::I64);
+value_impl_from!(u64, I64, Type::I64);
+value_impl_from!(f32, F32, Type::F32);
+value_impl_from!(f64, F64, Type::F64);
+value_impl_from!(u128, V128, Type::V128);
 
 macro_rules! value_impl_as {
     ($dst: ty, $name: ident, $mut_name: ident, $arm: ident) => {
@@ -208,27 +221,27 @@ macro_rules! value_impl_as {
 }
 
 impl Value {
-    pub fn get_type(&self) -> ValueType {
+    pub const fn get_type(&self) -> Type {
         match self {
-            Self::V128(_) => ValueType::Vector(VectorType::V128),
-            Self::F64(_) => ValueType::Number(NumberType::F64),
-            Self::I64(_) => ValueType::Number(NumberType::I64),
-            Self::F32(_) => ValueType::Number(NumberType::F32),
-            Self::I32(_) => ValueType::Number(NumberType::I32),
-            Self::ExternRef(_) => ValueType::Reference(ReferenceType::Extern),
-            Self::FuncRef(_) => ValueType::Reference(ReferenceType::Func),
+            Self::V128(_) => Type::V128,
+            Self::F64(_) => Type::F64,
+            Self::I64(_) => Type::I64,
+            Self::F32(_) => Type::F32,
+            Self::I32(_) => Type::I32,
+            Self::ExternRef(_) => Type::ExternRef,
+            Self::FuncRef(_) => Type::FuncRef,
         }
     }
 
-    pub fn default_with_type(ty: ValueType) -> Value {
+    pub fn default_with_type(ty: Type) -> Value {
         match ty {
-            ValueType::Number(NumberType::F32) => Value::F32(Default::default()),
-            ValueType::Number(NumberType::F64) => Value::F64(Default::default()),
-            ValueType::Number(NumberType::I32) => Value::I32(Default::default()),
-            ValueType::Number(NumberType::I64) => Value::I64(Default::default()),
-            ValueType::Reference(ReferenceType::Extern) => Value::ExternRef(Default::default()),
-            ValueType::Reference(ReferenceType::Func) => Value::FuncRef(Default::default()),
-            ValueType::Vector(VectorType::V128) => Value::V128(Default::default()),
+            Type::F32 => Value::F32(Default::default()),
+            Type::F64 => Value::F64(Default::default()),
+            Type::I32 => Value::I32(Default::default()),
+            Type::I64 => Value::I64(Default::default()),
+            Type::ExternRef => Value::ExternRef(Default::default()),
+            Type::FuncRef => Value::FuncRef(Default::default()),
+            Type::V128 => Value::V128(Default::default()),
         }
     }
 
@@ -371,7 +384,7 @@ pub enum ImportDescriptor {
     Function { type_index: u32 },
     Table { reference_type: ReferenceType, limits: Limits },
     Memory { page_count_limits: Limits },
-    Global { value_type: ValueType, mutability: Mutability },
+    Global { ty: Type, mutability: Mutability },
 }
 
 pub struct ExportDescriptor {

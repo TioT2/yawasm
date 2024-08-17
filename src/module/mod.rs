@@ -3,7 +3,7 @@ mod opcode;
 
 use std::collections::HashMap;
 
-use crate::{types::{self, TableType}, Expression, Function, Limits};
+use crate::{types::{self, TableType}, Expression, Function, Limits, Type};
 
 pub enum Source<'t> {
     WASM(&'t [u8]),
@@ -11,7 +11,7 @@ pub enum Source<'t> {
 }
 
 pub struct GlobalDescriptor {
-    pub value_type: types::ValueType,
+    pub value_type: Type,
     pub mutability: types::Mutability,
     pub expression: Expression,
 }
