@@ -78,6 +78,7 @@ impl std::fmt::Display for DecodeError {
 pub enum CodeValidationError {
     UnexpectedExpressionEnd(u8),
     InvalidStackTop,
+    NoTypesInTypedSelect,
 
     InvalidMemoryInstructionData,
     UnknownFunctionTypeIndex,

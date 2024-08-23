@@ -592,10 +592,104 @@ impl<'t> BlockDecoder<'t> {
                     output_stream.write(&instruction.unwrap());
                     output_stream.write(&(local_index as u32));
                 }
+
                 Opcode::Nop => {
                     output_stream.write(&instruction.unwrap());
                 }
-                _ => {}
+
+                Opcode::RefNull => {
+                    let byte = self.stream.get::<u8>().ok_or(DecodeError::UnexpectedStreamEnd)?;
+                    let ref_type = ReferenceType::try_from(byte).map_err(|_| EnumType::ReferenceType.as_decode_error(byte))?;
+
+                    frame.stack.push(ref_type.into());
+
+                    output_stream.write(&instruction::Instruction::I32Const);
+                    output_stream.write(&0u32);
+                }
+
+                Opcode::RefIsNull => {
+                    let top = frame.stack.pop().ok_or(CodeValidationError::NoOperands)?;
+
+                    if top != Type::FuncRef || top != Type::ExternRef {
+                        return Err(CodeValidationError::InvalidStackTop.into());
+                    }
+
+                    output_stream.write(&instruction::Instruction::I32Eqz);
+                }
+
+                Opcode::Select | Opcode::SelectTyped => {
+                    let required_type = if opcode == Opcode::SelectTyped {
+                        Some(self.stream
+                            .wasm_decode_vector(&|b: &u8| Type::try_from(*b).ok())
+                            .ok_or(DecodeError::UnexpectedStreamEnd)?
+                            .get(0)
+                            .copied()
+                            .ok_or(CodeValidationError::NoTypesInTypedSelect)?
+                        )
+                    } else {
+                        None
+                    };
+
+                    // Pop index
+                    pop!(I32);
+
+                    let first = frame.stack.pop().ok_or(CodeValidationError::NoOperands)?;
+                    let second = frame.stack.pop().ok_or(CodeValidationError::NoOperands)?;
+
+                    if let Some(ty) = required_type {
+                        if first != ty {
+                            return Err(CodeValidationError::UnexpectedOperandType {
+                                actual: first,
+                                expected: ty,
+                            }.into());
+                        }
+                    }
+
+                    if first != second {
+                        return Err(CodeValidationError::UnexpectedOperandType {
+                            actual: second,
+                            expected: first,
+                        }.into());
+                    }
+
+                    // insert value
+                    frame.stack.push(first);
+
+                    if opcode == Opcode::Select {
+                        output_stream.write(&instruction::Instruction::Select);
+                    } else {
+                        output_stream.write(&instruction::Instruction::SelectTyped);
+                    }
+                }
+
+                Opcode::Return => {
+                    output_stream.write(&instruction::Instruction::Return);
+                }
+
+                Opcode::Unreachable => {
+                    output_stream.write(&instruction::Instruction::Unreachable);
+                }
+
+                Opcode::RefFunc => {
+                    let func_index = self.stream.wasm_decode_unsigned()?;
+
+                    push!(FuncRef);
+
+                    output_stream.write(&instruction::Instruction::I32Const);
+                    output_stream.write(&(func_index as u32));
+                }
+
+                Opcode::System => {
+                    todo!("Implement system instruction set")
+                }
+
+                Opcode::Vector => {
+                    todo!("Implement vector instruction set")
+                }
+
+                _ => {
+                    todo!("Unimplemented opcode: {:?}", opcode);
+                }
             }
         };
 

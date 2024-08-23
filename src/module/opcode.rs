@@ -4,7 +4,7 @@
 use crate::instruction::Instruction;
 
 /// WASM Opcode
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Main {
     Unreachable        = 0x00, // Fatal error
     Nop                = 0x01, // Nop
@@ -216,7 +216,7 @@ impl TryFrom<u8> for Main {
 }
 
 /// System (FCh) opcode extender
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum System {
     I32TruncSatF32S =  0, // Trunc i32 into f32 as signed
     I32TruncSatF32U =  1, // Trunc i32 into f32 as unsigned

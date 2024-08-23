@@ -1,8 +1,11 @@
 mod runtime;
+mod item;
 
 use std::sync::Arc;
 
 use crate::{table::Table, types, Global, Memory, ModuleImpl};
+
+pub(crate) use item::StackItem;
 
 pub struct InstanceImpl {
     module: Arc<ModuleImpl>,
