@@ -10,18 +10,8 @@ pub enum BlockType {
 unsafe impl bytemuck::NoUninit for BlockType {}
 unsafe impl bytemuck::Zeroable for BlockType {}
 
-#[derive(Copy, Clone, PartialEq)]
-pub struct BlockHeader {
-    pub ty: BlockType,
-    pub length: u32,
-}
-
-unsafe impl bytemuck::Zeroable for BlockHeader {}
-unsafe impl bytemuck::AnyBitPattern for BlockHeader {}
-unsafe impl bytemuck::NoUninit for BlockHeader {}
-
 #[derive(Copy, Clone)]
-pub struct BlindBlockHeader {
+pub struct BlockHeader {
     /// number of values 'consumed' from stack
     pub consume_count: u16,
     /// number of values 'outputted' into stack
@@ -30,12 +20,12 @@ pub struct BlindBlockHeader {
     pub length: u32,
 }
 
-unsafe impl bytemuck::Zeroable for BlindBlockHeader {}
-unsafe impl bytemuck::AnyBitPattern for BlindBlockHeader {}
-unsafe impl bytemuck::NoUninit for BlindBlockHeader {}
+unsafe impl bytemuck::Zeroable for BlockHeader {}
+unsafe impl bytemuck::AnyBitPattern for BlockHeader {}
+unsafe impl bytemuck::NoUninit for BlockHeader {}
 
 #[derive(Copy, Clone)]
-pub struct BlindBranchHeader {
+pub struct BranchHeader {
     /// number of values 'consumed' from stack
     pub consume_count: u16,
     /// number of values 'outputted' into stack
@@ -46,9 +36,9 @@ pub struct BlindBranchHeader {
     pub else_length: u32,
 }
 
-unsafe impl bytemuck::Zeroable for BlindBranchHeader {}
-unsafe impl bytemuck::AnyBitPattern for BlindBranchHeader {}
-unsafe impl bytemuck::NoUninit for BlindBranchHeader {}
+unsafe impl bytemuck::Zeroable for BranchHeader {}
+unsafe impl bytemuck::AnyBitPattern for BranchHeader {}
+unsafe impl bytemuck::NoUninit for BranchHeader {}
 
 #[derive(Copy, Clone)]
 pub struct TableBranchHeader {
@@ -242,8 +232,6 @@ pub enum Instruction {
     I64Extend8S,
     I64Extend16S,
     I64Extend32S,
-    RefNull,
-    RefIsNull,
     RefFunc,
     System,
     Vector,

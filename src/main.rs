@@ -18,6 +18,11 @@ fn main() {
         .as_typed_callable::<f32, f32>()
         .expect("Error hard-typing function");
 
-    println!("WASM f_inv_sqrt: {}", wasm_f_inv_sqrt(4.0).unwrap());
-    println!("WASM vec3f_norm: {:?}", wasm_vec3f_norm((3.0, 4.0, 5.0)).unwrap());
+    let i = wasm_f_inv_sqrt(4.0)
+        .expect("Error during fast inverse square root computation occured");
+    println!("WASM f_inv_sqrt: {}", i);
+
+    let n = wasm_vec3f_norm((3.0, 4.0, 5.0))
+        .expect("Error during vector normalization occured");
+    println!("WASM vec3f_norm: {:?}", n);
 }

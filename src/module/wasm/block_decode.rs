@@ -1,4 +1,4 @@
-use crate::{instruction::{self, BlindBlockHeader, BlindBranchHeader, BlockType}, module::{opcode, wasm::{CodeValidationError, EnumType}, GlobalDescriptor}, types::FunctionType, util::binary_stream::{BinaryInputStream, BinaryOutputStream}, Mutability, NumberType, ReferenceType, Type, Value};
+use crate::{instruction::{self, BlockHeader, BranchHeader, BlockType}, module::{opcode, wasm::{CodeValidationError, EnumType}, GlobalDescriptor}, types::FunctionType, util::binary_stream::{BinaryInputStream, BinaryOutputStream}, Mutability, NumberType, ReferenceType, Type, Value};
 
 use super::DecodeError;
 
@@ -45,20 +45,25 @@ struct ValidationStackFrame {
 
 struct BlockDecoder<'t> {
     stream: &'t mut BinaryInputStream<'t>,
-    output: BinaryOutputStream,
+    // output: BinaryOutputStream,
     function_types: &'t [FunctionType],
-    function_type_idx: &'t [usize],
+    function_type_idx: &'t [u32],
     globals: &'t [GlobalDescriptor],
     locals: &'t [Type],
     stack: Vec<ValidationStackFrame>,
 }
 
 impl<'t> BlockDecoder<'t> {
-    pub fn new(stream: &'t mut BinaryInputStream<'t>, function_types: &'t [FunctionType], function_type_idx: &'t [usize], locals: &'t [Type], globals: &'t [GlobalDescriptor]) -> Self {
+    pub fn new(
+        stream: &'t mut BinaryInputStream<'t>,
+        function_types: &'t [FunctionType],
+        function_type_idx: &'t [u32],
+        locals: &'t [Type],
+        globals: &'t [GlobalDescriptor]
+    ) -> Self {
         Self {
             function_types,
             function_type_idx,
-            output: BinaryOutputStream::new(),
             locals,
             globals,
             stream,
@@ -88,7 +93,7 @@ impl<'t> BlockDecoder<'t> {
                 if vs != inputs {
                     Err(CodeValidationError::InvalidStackTop.into())
                 } else {
-                    self.stack.truncate(inputs.len());
+                    self.stack.truncate(self.stack.len() - inputs.len());
                     Ok(())
                 }
             }
@@ -152,7 +157,7 @@ impl<'t> BlockDecoder<'t> {
 
             let instruction: Option::<instruction::Instruction> = opcode.try_into().ok();
 
-            match opcode {
+             match opcode {
                 // block terminators
                 Opcode::ExpressionEnd | Opcode::Else => {
                     break 'block_parsing opcode;
@@ -173,7 +178,7 @@ impl<'t> BlockDecoder<'t> {
                         return Err(CodeValidationError::UnexpectedExpressionEnd(end as u8).into());
                     }
 
-                    let header = BlindBlockHeader {
+                    let header = BlockHeader {
                         consume_count: inputs.len() as u16,
                         output_count: outputs.len() as u16,
                         length: code.len() as u32,
@@ -205,7 +210,7 @@ impl<'t> BlockDecoder<'t> {
 
                     frame = self.stack.pop().unwrap();
 
-                    let header = BlindBranchHeader {
+                    let header = BranchHeader {
                         consume_count: inputs.len() as u16,
                         output_count: outputs.len() as u16,
                         then_length: then_code.len() as u32,
@@ -332,7 +337,7 @@ impl<'t> BlockDecoder<'t> {
 
                     let n = self.stream.wasm_decode_unsigned()? as u32;
 
-                    output_stream.write(&instruction.unwrap());
+                    output_stream.write(&instruction::Instruction::I32Const);
                     output_stream.write(&n);
                 }
 
@@ -522,7 +527,7 @@ impl<'t> BlockDecoder<'t> {
 
                         self.function_type_idx
                             .get(func_id)
-                            .copied()
+                            .map(|v| *v as usize)
                             .ok_or(CodeValidationError::UnknownFunctionIndex)?
                     };
 
@@ -563,19 +568,19 @@ impl<'t> BlockDecoder<'t> {
                     let ty = self.locals.get(local_index).ok_or(CodeValidationError::UnknownLocalIndex)?;
                     frame.stack.push(*ty);
 
-                    output_stream.write(&instruction.unwrap());
+                    output_stream.write(&instruction::Instruction::LocalGet);
                     output_stream.write(&(local_index as u32));
                 }
                 Opcode::LocalSet => {
                     let local_index = self.stream.wasm_decode_unsigned()?;
-                    let ty = *self.locals.get(local_index).ok_or(CodeValidationError::UnknownGlobalIndex)?;
+                    let actual = *self.locals.get(local_index).ok_or(CodeValidationError::UnknownLocalIndex)?;
                     let expected = frame.stack.pop().ok_or(CodeValidationError::NoOperands)?;
 
-                    if ty != expected {
-                        return Err(CodeValidationError::UnexpectedOperandType { expected, actual: ty }.into());
+                    if actual != expected {
+                        return Err(CodeValidationError::UnexpectedOperandType { expected, actual }.into());
                     }
 
-                    output_stream.write(&instruction.unwrap());
+                    output_stream.write(&instruction::Instruction::LocalSet);
                     output_stream.write(&(local_index as u32));
                 }
 
@@ -701,9 +706,13 @@ impl<'t> BlockDecoder<'t> {
     }
 
     pub fn decode(mut self, inputs: &[Type], expected_outputs: &[Type]) -> Result<Vec<u8>, DecodeError> {
-        self.decode_block(inputs, expected_outputs)?;
+        let (code, ending_instruction) = self.decode_block(inputs, expected_outputs)?;
 
-        Ok(self.output.finish())
+        if ending_instruction == opcode::Main::ExpressionEnd {
+            Ok(code)
+        } else {
+            Err(DecodeError::InvalidBlockEnd)
+        }
     }
 }
 
@@ -711,7 +720,7 @@ impl<'t> BlockDecoder<'t> {
 pub(super) fn decode_block_validated<'t>(
     stream: &'t mut BinaryInputStream<'t>,
     function_types: &'t [FunctionType],
-    function_type_idx: &'t [usize],
+    function_type_idx: &'t [u32],
     local_types: &'t [Type],
     globals: &'t [GlobalDescriptor],
     initial_values: &'t [Type],
@@ -721,119 +730,3 @@ pub(super) fn decode_block_validated<'t>(
 
     decoder.decode(initial_values, expected_result)
 }
-
-pub(super) fn decode_block(stream: &mut BinaryInputStream) -> Result<(Vec<u8>, u8), DecodeError> {
-    let mut instruction_stream = BinaryOutputStream::new();
-
-    let ending_byte = 'block_parsing_loop: loop {
-        let opcode_u = stream.get::<u8>().ok_or(DecodeError::UnexpectedStreamEnd)?;
-        let opcode = opcode::Main::try_from(opcode_u).map_err(|_| EnumType::Opcode.as_decode_error(opcode_u))?;
-
-        let instruction: Option<instruction::Instruction> = opcode.try_into().ok();
-
-        type Opcode = opcode::Main;
-
-        match opcode {
-            Opcode::Else | Opcode::ExpressionEnd => {
-                break 'block_parsing_loop opcode_u;
-            }
-            // Decode block
-            Opcode::Block | Opcode::Loop | Opcode::If => {
-                // Requires block parsing
-
-                let ty = stream.wasm_decode_block_type()?;
-                let (block_bits, ending_byte) = decode_block(stream)?;
-
-                instruction_stream.write(&instruction.unwrap());
-
-                // Write conditional
-                instruction_stream.write(&instruction::BlockHeader {
-                    length: block_bits.len() as u32,
-                    ty,
-                });
-                instruction_stream.write_slice(&block_bits);
-
-                if opcode == Opcode::If && ending_byte == Opcode::Else as u8 {
-                    let (else_bits, ending_byte) = decode_block(stream)?;
-                    if ending_byte != Opcode::ExpressionEnd as u8 {
-                        return Err(CodeValidationError::UnexpectedExpressionEnd(ending_byte).into());
-                    }
-
-                    instruction_stream.write(&instruction::Instruction::Else);
-                    instruction_stream.write(&instruction::BlockHeader {
-                        length: else_bits.len() as u32,
-                        ty,
-                    });
-                    instruction_stream.write_slice(&else_bits);
-                }
-            }
-            Opcode::BrTable => {
-                // Parse branch table
-                instruction_stream.write(&instruction::Instruction::BrTable);
-
-                let label_count = stream.wasm_decode_unsigned()? as u32;
-
-                // Write label count
-                instruction_stream.write(&label_count);
-                // Write labels and default
-                for _ in 0..(label_count + 1) {
-                    instruction_stream.write(&(stream.wasm_decode_unsigned()? as u32));
-                }
-            }
-            Opcode::CallIndirect => {
-                let ty = stream.wasm_decode_unsigned()? as u32;
-                let table_index = stream.wasm_decode_unsigned()? as u32;
-
-                instruction_stream.write(&instruction::Instruction::CallIndirect);
-                instruction_stream.write(&ty);
-                instruction_stream.write(&table_index);
-            }
-            Opcode::I64Const => {
-                instruction_stream.write(&instruction::Instruction::I64Const);
-                instruction_stream.write(&(stream.wasm_decode_unsigned()? as u64))
-            }
-            Opcode::F32Const => {
-                instruction_stream.write(&instruction::Instruction::F32Const);
-                instruction_stream.write(&stream.get::<f32>().ok_or(DecodeError::UnexpectedStreamEnd)?)
-            }
-            Opcode::F64Const => {
-                instruction_stream.write(&instruction::Instruction::F64Const);
-                instruction_stream.write(&stream.get::<f64>().ok_or(DecodeError::UnexpectedStreamEnd)?)
-            }
-            Opcode::I32Load | Opcode::I64Load | Opcode::F32Load | Opcode::F64Load | Opcode::I32Load8S | Opcode::I32Load8U | Opcode::I32Load16S | Opcode::I32Load16U |
-            Opcode::I64Load16S | Opcode::I64Load16U | Opcode::I64Load8S | Opcode::I64Load8U | Opcode::I64Load32S | Opcode::I64Load32U | Opcode::I32Store | Opcode::I64Store |
-            Opcode::F32Store | Opcode::F64Store | Opcode::I32Store8 | Opcode::I32Store16 | Opcode::I64Store8 | Opcode::I64Store16 | Opcode::I64Store32 => {
-                let (_align, offset) = (stream.wasm_decode_unsigned()? as u32, stream.wasm_decode_unsigned()? as u32);
-
-                instruction_stream.write(&instruction.unwrap());
-                instruction_stream.write(&offset);
-            }
-            Opcode::MemorySize | Opcode::MemoryGrow => {
-                if stream.get::<u8>().ok_or(DecodeError::UnexpectedStreamEnd)? != 0 {
-                    return Err(CodeValidationError::InvalidMemoryInstructionData.into());
-                }
-            }
-            Opcode::RefFunc | Opcode::Br | Opcode::BrIf | Opcode::Call | Opcode::LocalGet | Opcode::LocalSet | Opcode::LocalTee |
-            Opcode::GlobalGet | Opcode::GlobalSet | Opcode::TableGet | Opcode::TableSet | Opcode::I32Const => {
-                instruction_stream.write(&instruction.unwrap());
-                instruction_stream.write(&(stream.wasm_decode_unsigned()? as u32));
-            }
-            Opcode::RefNull => {
-                let byte = stream.get::<u8>().ok_or(DecodeError::UnexpectedStreamEnd)?;
-                instruction_stream.write(&instruction::Instruction::RefNull);
-                instruction_stream.write(&(ReferenceType::try_from(byte).map_err(|_| EnumType::ReferenceType.as_decode_error(byte))? as u8));
-            }
-            // Vector and system instrucitons
-            Opcode::Vector | Opcode::System => return Err(DecodeError::UnsupportedFeature),
-            _ => {
-                instruction_stream.write(&instruction.unwrap())
-            }
-        }
-    };
-
-    Ok((
-        instruction_stream.finish(),
-        ending_byte
-    ))
-}
-

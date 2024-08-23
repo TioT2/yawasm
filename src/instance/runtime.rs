@@ -1,31 +1,5 @@
 use crate::{instruction::{self, BlockType}, types::{self, FunctionType, Value}, util::binary_stream::BinaryInputStream, Expression, InstanceImpl, Mutability, NumberType, Type};
-use super::BlockExecutionResult;
-
-struct InputsOutputs {
-    binding: [Type; 1],
-}
-
-impl InputsOutputs {
-    pub fn new() -> Self {
-        InputsOutputs {
-            binding: [Type::F32],
-        }
-    }
-
-    pub fn get<'t>(&'t mut self, ty: BlockType, types: &'t [FunctionType]) -> Option<(&'t [Type], &'t [Type])> {
-        Some(match ty {
-            instruction::BlockType::Functional(fnid) => {
-                let fn_ty = types.get(fnid as usize)?;
-                (fn_ty.inputs.as_slice(), fn_ty.outputs.as_slice())
-            },
-            instruction::BlockType::ResolvingTo(resolve_ty) => {
-                self.binding = [resolve_ty];
-                ([].as_slice(), self.binding.as_slice())
-            },
-            instruction::BlockType::Void => ([].as_slice(), [].as_slice()),
-        })
-    }
-}
+use super::{BlockExecutionResult, StackItem};
 
 impl InstanceImpl {
     pub(crate) fn call_by_id(&mut self, func_id: u32) -> Option<BlockExecutionResult> {
@@ -33,46 +7,44 @@ impl InstanceImpl {
         let func = module.functions.get(func_id as usize)?;
         let func_ty = module.types.get(func.type_id as usize)?;
 
-        let mut locals = func_ty.inputs.iter()
-            .map(|expected_type| -> Option<types::Value> {
-                let p = self.stack.pop()?;
+        // iiiu, but quite performant iiiu))
+        if self.stack.len() < func_ty.inputs.len() {
+            return None;
+        }
 
-                if *expected_type != p.get_type() {
-                    return None;
-                }
+        let mut locals = Vec::with_capacity(func_ty.inputs.len() + func.locals.len());
 
-                Some(p)
-            })
-            .chain(func.locals.iter().map(|ty| Some(Value::default_with_type(*ty))))
-            .collect::<Option<Vec<types::Value>>>()?;
+        // extend from stack top
+        locals.extend(unsafe {
+            let l = self.stack.len();
+            self.stack.get_unchecked(l - func_ty.inputs.len()..l)
+        }.iter().rev());
 
-        if let BlockExecutionResult::Branch { depth } = self.exec_block(&[], &func_ty.outputs, &func.expression.instructions, &mut locals)? {
+        // truncate stack
+        self.stack.truncate(self.stack.len() - func_ty.inputs.len());
+
+        locals.extend(std::iter::repeat(StackItem::default()).take(func.locals.len()));
+
+        let block_exec_result = self.exec_block(
+            0,
+            func_ty.outputs.len(),
+            &func.expression.instructions,
+            &mut locals
+        )?;
+
+        if let BlockExecutionResult::Branch { depth } = block_exec_result {
             Some(BlockExecutionResult::Branch { depth: depth - 1 })
         } else {
             Some(BlockExecutionResult::Ok)
         }
     }
 
-    fn check_stack_top(&self, expected_top: &[Type]) -> Option<bool> {
-        Some(self.stack
-            .get(self.stack.len().checked_sub(expected_top.len())?..self.stack.len())?
-            .iter()
-            .zip(expected_top.iter())
-            .fold(true, |collector, (value, expected_type)| collector & (value.get_type() == *expected_type))
-        )
-    }
-
-    fn exec_block(&mut self, inputs: &[Type], outputs: &[Type], block: &[u8], locals: &mut [Value]) -> Option<BlockExecutionResult> {
+    fn exec_block(&mut self, inputs: usize, outputs: usize, block: &[u8], locals: &mut [StackItem]) -> Option<BlockExecutionResult> {
         if self.trapped {
             panic!("Can't execute while trapped");
         }
 
         let mut stream = BinaryInputStream::new(block);
-
-        // Validate inputs
-        if !self.check_stack_top(inputs).unwrap_or(false) {
-            return None;
-        }
 
         let initial_stack_height = self.stack.len();
 
@@ -85,12 +57,16 @@ impl InstanceImpl {
             let instruction = instruction::Instruction::try_from(byte).expect(format!("Fatal error: unknown instruction {:02X}", byte).as_str());
 
             macro_rules! pop {
-                ($exp_t: ident) => (self.stack.pop()?.$exp_t()?);
+                ($exp_t: ident) => {
+                    unsafe {
+                        (self.stack.pop()?).$exp_t()
+                    }
+                };
                 () => (self.stack.pop()?);
             }
 
             macro_rules! top {
-                ($exp_t: ident) => (self.stack.last_mut()?.$exp_t()?);
+                ($exp_t: ident) => (unsafe { self.stack.last_mut()?.$exp_t() } );
                 () => (self.stack.last_mut()?);
             }
 
@@ -134,43 +110,35 @@ impl InstanceImpl {
 
                     let stack_h = self.stack.len();
 
-                    let mut inputs_outputs = InputsOutputs::new();
-                    let m = self.module.clone();
-                    let (inputs, outputs) = inputs_outputs.get(header.ty, &m.types)?;
+                    exec_block!(
+                        header.consume_count as usize,
+                        header.output_count as usize, 
+                        code,
+                        locals
+                    );
 
-                    exec_block!(inputs, outputs, code, locals);
-
-                    let exp_h = stack_h + match header.ty {
-                        instruction::BlockType::Functional(i) => self.module.types[i as usize].outputs.len(),
-                        instruction::BlockType::ResolvingTo(_) => 1,
-                        instruction::BlockType::Void => 0,
-                    };
-
-                    if stack_h != exp_h { panic!("Unexpected stack height"); }
+                    if stack_h != stack_h + header.output_count as usize { panic!("Unexpected stack height"); }
                 }
                 instruction::Instruction::Loop => {
 
                 }
                 instruction::Instruction::If => {
-                    let header = stream.get::<instruction::BlockHeader>()?;
-                    let code = stream.get_byte_slice(header.length as usize)?;
+                    let header = stream.get::<instruction::BranchHeader>()?;
 
-                    let mut inputs_outputs = InputsOutputs::new();
-                    let m = self.module.clone();
-                    let (inputs, outputs) = inputs_outputs.get(header.ty, &m.types)?;
+                    let code = stream.get_byte_slice(header.then_length as usize)?;
+
+                    let (inputs, outputs) = (header.consume_count as usize, header.output_count as usize);
 
                     if pop!(as_u32) != 0 {
                         exec_block!(inputs, outputs, code, locals);
 
                         if stream.check::<u8>()? == instruction::Instruction::Else as u8 {
                             stream.skip(1)?;
-                            let l = stream.get::<instruction::BlockHeader>()?.length;
-                            stream.skip(l as usize)?;
+                            stream.skip(header.else_length as usize)?;
                         }
                     } else if stream.check::<u8>()? == instruction::Instruction::Else as u8 {
                         stream.skip(1)?;
-                        let else_header = stream.get::<instruction::BlockHeader>()?;
-                        exec_block!(inputs, outputs, stream.get_byte_slice(else_header.length as usize)?, locals);
+                        exec_block!(inputs, outputs, stream.get_byte_slice(header.else_length as usize)?, locals);
                     }
                 }
                 instruction::Instruction::Else => {
@@ -206,31 +174,17 @@ impl InstanceImpl {
                 instruction::Instruction::SelectTyped => {}
                 instruction::Instruction::LocalGet => push!(*locals.get(stream.get::<u32>()? as usize)?),
                 instruction::Instruction::LocalSet => {
-                    let l = locals.get_mut(stream.get::<u32>()? as usize)?;
-                    let v = pop!();
-
-                    if l.get_type() != v.get_type() {
-                        return None;
-                    }
-
-                    *l = v;
+                    *locals.get_mut(stream.get::<u32>()? as usize)? = pop!();
                 }
                 instruction::Instruction::LocalTee => {
-                    let l = locals.get_mut(stream.get::<u32>()? as usize)?;
-                    let v = *self.stack.last()?;
-
-                    if l.get_type() != v.get_type() {
-                        return None;
-                    }
-
-                    *l = v;
+                    *locals.get_mut(stream.get::<u32>()? as usize)? = *self.stack.last()?;
                 }
                 instruction::Instruction::GlobalGet => push!(self.globals.get(stream.get::<u32>()? as usize)?.value),
                 instruction::Instruction::GlobalSet => {
                     let l = self.globals.get_mut(stream.get::<u32>()? as usize)?;
                     let v = pop!();
 
-                    if l.mutability != Mutability::Mut || l.value.get_type() != v.get_type() {
+                    if l.mutability != Mutability::Mut {
                         return None;
                     }
                     l.value = v;
@@ -413,18 +367,6 @@ impl InstanceImpl {
                 instruction::Instruction::I64Extend8S  => *top!() = (unsafe { std::mem::transmute::< u8,  i8>((top!(as_u64) & 0x000000FF) as  u8) } as i64).into(),
                 instruction::Instruction::I64Extend16S => *top!() = (unsafe { std::mem::transmute::<u16, i16>((top!(as_u64) & 0x0000FFFF) as u16) } as i64).into(),
                 instruction::Instruction::I64Extend32S => *top!() = (unsafe { std::mem::transmute::<u32, i32>((top!(as_u64) & 0xFFFFFFFF) as u32) } as i64).into(),
-                instruction::Instruction::RefNull => push!(Value::default_with_type(types::ReferenceType::try_from(stream.get::<u8>()?).ok()?.into())),
-                instruction::Instruction::RefIsNull => {
-                    let t = top!();
-
-                    *t = ((0 == match t {
-                        types::Value::FuncRef(u) => *u,
-                        types::Value::ExternRef(u) => *u,
-                        _ => {
-                            return None;
-                        }
-                    }) as i32).into();
-                }
                 instruction::Instruction::RefFunc => {}
                 instruction::Instruction::System => todo!("TODO: Implement system instruction extension"),
                 instruction::Instruction::Vector => todo!("TODO: Implement vector instruction extension"),
@@ -432,16 +374,16 @@ impl InstanceImpl {
         };
 
         // validate returnvalues
-        if !self.check_stack_top(outputs).unwrap_or(false) {
+        if self.stack.len() < outputs {
             None
         } else {
-            let copy_range = (self.stack.len() - outputs.len())..self.stack.len();
-            let copy_dest = initial_stack_height - inputs.len();
+            let copy_range = (self.stack.len() - outputs)..self.stack.len();
+            let copy_dest = initial_stack_height - inputs;
 
             // copy 'return' operands
             self.stack.copy_within(copy_range, copy_dest);
             // truncate stack
-            self.stack.truncate(copy_dest + outputs.len());
+            self.stack.truncate(copy_dest + outputs);
 
             Some(exec_result)
         }
@@ -453,14 +395,14 @@ impl InstanceImpl {
             panic!("TODO: fix expression execution...");
         }
 
-        self.exec_block(&[], expected_result, &expr.instructions, &mut []);
+        self.exec_block(0, expected_result.len(), &expr.instructions, &mut [])?;
 
-        return self.stack
+        return Some(self.stack
             .get(self.stack.len().checked_sub(expected_result.len())?..self.stack.len())?
             .iter()
             .zip(expected_result.iter())
-            .map(|(elem, ty)| if elem.get_type() == *ty { Some(*elem) } else { None })
-            .collect::<Option<Vec<Value>>>()
+            .map(|(elem, ty)| elem.to_value(*ty))
+            .collect::<Vec<Value>>())
     }
 
     pub fn call(&mut self, id: u32, arguments: &[Value]) -> Option<Vec<Value>> {
@@ -470,7 +412,7 @@ impl InstanceImpl {
         let func_ty = module.types.get(func.type_id as usize)?;
 
         for a in arguments {
-            self.stack.push(*a);
+            self.stack.push(StackItem::from(*a));
         }
 
         if let BlockExecutionResult::Branch { depth } = self.call_by_id(id)? {
@@ -483,10 +425,16 @@ impl InstanceImpl {
             self.trapped = true;
             return None;
         }
+        
         let mut s = Vec::new();
         std::mem::swap(&mut s, &mut self.stack);
-        s.reverse();
 
-        Some(s)
+        Some(s
+            .iter()
+            .rev()
+            .zip(func_ty.outputs.iter())
+            .map(|(item, ty)| item.to_value(*ty))
+            .collect::<Vec<_>>()
+        )
     }
 }

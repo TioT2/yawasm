@@ -3,13 +3,19 @@ mod item;
 
 use std::sync::Arc;
 
-use crate::{table::Table, types, Global, Memory, ModuleImpl};
+use crate::{table::Table, Memory, ModuleImpl, Mutability, Type};
 
 pub(crate) use item::StackItem;
 
+pub(crate) struct Global {
+    pub value: StackItem,
+    pub ty: Type,
+    pub mutability: Mutability,
+}
+
 pub struct InstanceImpl {
     module: Arc<ModuleImpl>,
-    stack: Vec<types::Value>,
+    stack: Vec<StackItem>,
     memory: Memory,
     tables: Vec<Table>,
     globals: Vec<Global>,
@@ -41,8 +47,9 @@ impl ModuleImpl {
         instance.globals = self.globals
             .iter()
             .map(|descriptor| Some(Global {
-                value: *instance.exec_expression(&descriptor.expression, &[descriptor.value_type])?.get(0)?,
+                ty: descriptor.value_type,
                 mutability: descriptor.mutability,
+                value: todo!("Globals unimplemented"),
             }))
             .collect::<Option<Vec<Global>>>()?;
 

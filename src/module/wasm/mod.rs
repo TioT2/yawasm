@@ -2,9 +2,9 @@ mod block_decode;
 
 use std::collections::HashMap;
 
-use block_decode::decode_block;
+use block_decode::decode_block_validated;
 
-use crate::{instruction, types, util::binary_stream::{BinaryInputStream, BinaryOutputStream}, Function, Type};
+use crate::{instruction, types::{self, FunctionType}, util::binary_stream::{BinaryInputStream, BinaryOutputStream}, Function, Type};
 use super::{opcode, Expression, GlobalDescriptor, ModuleImpl};
 
 
@@ -54,6 +54,7 @@ pub enum DecodeError {
     UnexpectedStreamEnd,
 
     UnsupportedFeature,
+    InvalidBlockEnd,
 
     CodeValidationError(CodeValidationError),
 }
@@ -66,10 +67,11 @@ impl std::fmt::Display for DecodeError {
             Self::Utf8DecodeError => write!(f, "utf8 decode error"),
             Self::InvalidModuleMagic => write!(f, "invalid module magic"),
             Self::UnsignedDecodeError => write!(f, "unsigned decode error"),
-            Self::SignedDecodeError { bit_count }  => write!(f, "error durnig {}-bit signed decode", bit_count),
+            Self::SignedDecodeError { bit_count } => write!(f, "error durnig {}-bit signed decode", bit_count),
             Self::UnexpectedStreamEnd => write!(f, "unexpected stream end"),
             Self::CodeValidationError(err) => write!(f, "code validation error: {}", err),
             Self::UnsupportedFeature => write!(f, "unsupported feature (e.g. system/vector extension occured)"),
+            Self::InvalidBlockEnd => write!(f, "invalid block ending opcode"),
         }
     }
 }
@@ -277,18 +279,30 @@ fn decode_global_section(section: &[u8]) -> Result<Vec<GlobalDescriptor>, Decode
             Ok(GlobalDescriptor {
                 value_type: Type::try_from(type_byte).map_err(|_| EnumType::Type.as_decode_error(type_byte))?,
                 mutability: types::Mutability::try_from(mut_byte).map_err(|_| EnumType::Mutability.as_decode_error(mut_byte))?,
-                expression: decode_expression(&mut stream)?,
+                expression: Expression { instructions: Vec::new(), }, // TODO
             })
         })
         .collect::<Result<Vec<GlobalDescriptor>, DecodeError>>()
 }
 
-fn decode_expression(stream: &mut BinaryInputStream) -> Result<Expression, DecodeError> {
-    let (instructions, end) = decode_block(stream)?;
-
-    if end != opcode::Main::ExpressionEnd as u8 {
-        return Err(CodeValidationError::UnexpectedExpressionEnd(end).into());
-    }
+fn decode_expression<'t>(
+    stream: &'t mut BinaryInputStream<'t>,
+    function_types: &'t [FunctionType],
+    function_type_idx: &'t [u32],
+    locals: &'t [Type],
+    globals: &'t [GlobalDescriptor],
+    inputs: &'t [Type],
+    outputs: &'t [Type],
+) -> Result<Expression, DecodeError> {
+    let instructions = decode_block_validated(
+        stream,
+        function_types,
+        function_type_idx,
+        locals,
+        globals,
+        inputs,
+        outputs,
+    )?;
 
     return Ok(Expression { instructions })
 }
@@ -351,28 +365,46 @@ impl ModuleImpl {
         }
 
         let functions = function_type_idx.iter().map(|v| *v).zip(code.iter()).map(|(type_id, code)| -> Result<_, DecodeError> {
-            if function_types.len() <= type_id as usize {
-                return Err(CodeValidationError::UnknownFunctionIndex.into());
-            }
+            let func_ty = function_types.get(type_id as usize).ok_or(CodeValidationError::UnknownFunctionIndex)?;
 
             let mut stream = BinaryInputStream::new(code);
 
+            let locals = {
+                let mut locals = Vec::<Type>::new();
+
+                for _ in 0..stream.wasm_decode_unsigned()? {
+                    let local_repeat_count = stream.wasm_decode_unsigned()?;
+                    let valtype_byte = stream.get::<u8>().ok_or(DecodeError::UnexpectedStreamEnd)?;
+                    let ty: Type = valtype_byte.try_into().map_err(|_| EnumType::Type.as_decode_error(valtype_byte))?;
+
+                    locals.extend(std::iter::repeat(ty).take(local_repeat_count));
+                }
+
+                locals
+            };
+
+            // local varaibles used during function execution
+            let exec_locals = {
+                let mut l = Vec::new();
+
+                l.extend_from_slice(&func_ty.inputs);
+                l.extend_from_slice(&locals);
+
+                l
+            };
+
             Ok(Function {
+                expression: decode_expression(
+                    &mut stream,
+                    &function_types,
+                    &function_type_idx,
+                    &exec_locals,
+                    &globals,
+                    &[],
+                    &func_ty.outputs,
+                )?,
                 type_id,
-                locals: {
-                    let mut locals = Vec::<Type>::new();
-
-                    for _ in 0..stream.decode_unsigned().ok_or(DecodeError::UnsignedDecodeError)? {
-                        let local_repeat_count = stream.decode_unsigned().ok_or(DecodeError::UnsignedDecodeError)?;
-                        let valtype_byte = stream.get::<u8>().ok_or(DecodeError::UnexpectedStreamEnd)?;
-                        let ty: Type = valtype_byte.try_into().map_err(|_| EnumType::Type.as_decode_error(valtype_byte))?;
-
-                        locals.extend(std::iter::repeat(ty).take(local_repeat_count));
-                    }
-
-                    locals
-                },
-                expression: decode_expression(&mut stream)?,
+                locals,
             })
         }).collect::<Result<Vec<Function>, DecodeError>>()?;
 

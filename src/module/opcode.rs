@@ -1,4 +1,3 @@
-
 #![allow(unused)]
 
 use crate::instruction::Instruction;
@@ -686,8 +685,6 @@ impl TryInto<Instruction> for Main {
             Main::I64Extend8S          => Ok(Instruction::I64Extend8S),
             Main::I64Extend16S         => Ok(Instruction::I64Extend16S),
             Main::I64Extend32S         => Ok(Instruction::I64Extend32S),
-            Main::RefNull              => Ok(Instruction::RefNull),
-            Main::RefIsNull            => Ok(Instruction::RefIsNull),
             Main::RefFunc              => Ok(Instruction::RefFunc),
             Main::System               => Ok(Instruction::System),
             Main::Vector               => Ok(Instruction::Vector),
