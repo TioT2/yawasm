@@ -27,11 +27,6 @@ pub(crate) struct Function {
     pub expression: Expression,
 }
 
-pub(crate) struct Global {
-    pub mutability: Mutability,
-    pub value: Value,
-}
-
 pub struct Module {
     module: Arc<ModuleImpl>,
 }

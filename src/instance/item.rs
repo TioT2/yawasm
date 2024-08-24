@@ -41,7 +41,7 @@ impl From<Value> for StackItem {
             Value::F64(f64) => Self { f64 },
             Value::I32(i32) => Self { i32 },
             Value::I64(i64) => Self { i64 },
-            Value::V128(v128) => unimplemented!("V128 values aren't implemented"),
+            Value::V128(_) => unimplemented!("V128 values aren't implemented"),
         }
     }
 }

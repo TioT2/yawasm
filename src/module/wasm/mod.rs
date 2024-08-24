@@ -1,11 +1,11 @@
 mod block_decode;
 
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Binary};
 
-use block_decode::decode_block_validated;
+use block_decode::decode_block;
 
-use crate::{instruction, types::{self, FunctionType}, util::binary_stream::{BinaryInputStream, BinaryOutputStream}, Function, Type};
-use super::{opcode, Expression, GlobalDescriptor, ModuleImpl};
+use crate::{instruction, types::{self, FunctionType}, util::binary_stream::BinaryInputStream, Function, Mutability, Type};
+use super::{Expression, GlobalDescriptor, ModuleImpl};
 
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -268,33 +268,63 @@ fn decode_code_section(section: &[u8]) -> Result<Vec<&[u8]>, DecodeError> {
         .collect::<Result<Vec<&[u8]>, DecodeError>>()
 }
 
-fn decode_global_section(section: &[u8]) -> Result<Vec<GlobalDescriptor>, DecodeError> {
-    let mut stream = BinaryInputStream::new(section);
+fn a<'t>(ft: &'t [FunctionType], s: &'t mut BinaryInputStream) -> Vec<u8> {
+    std::hint::black_box((s, ft));
 
-    (0..stream.decode_unsigned().ok_or(DecodeError::UnsignedDecodeError)?)
-        .map(|_| -> Result<GlobalDescriptor, DecodeError> {
-            let type_byte = stream.get::<u8>().ok_or(DecodeError::UnexpectedStreamEnd)?;
-            let mut_byte = stream.get::<u8>().ok_or(DecodeError::UnexpectedStreamEnd)?;
-
-            Ok(GlobalDescriptor {
-                value_type: Type::try_from(type_byte).map_err(|_| EnumType::Type.as_decode_error(type_byte))?,
-                mutability: types::Mutability::try_from(mut_byte).map_err(|_| EnumType::Mutability.as_decode_error(mut_byte))?,
-                expression: Expression { instructions: Vec::new(), }, // TODO
-            })
-        })
-        .collect::<Result<Vec<GlobalDescriptor>, DecodeError>>()
+    vec![30, 47, 80]
 }
 
-fn decode_expression<'t>(
-    stream: &'t mut BinaryInputStream<'t>,
+/// Global section decode function
+fn decode_global_section<'t>(
+    section: &'t [u8],
     function_types: &'t [FunctionType],
     function_type_idx: &'t [u32],
-    locals: &'t [Type],
-    globals: &'t [GlobalDescriptor],
-    inputs: &'t [Type],
-    outputs: &'t [Type],
-) -> Result<Expression, DecodeError> {
-    let instructions = decode_block_validated(
+) -> Result<Vec<GlobalDescriptor>, DecodeError> {
+    let mut stream = BinaryInputStream::new(&section);
+
+    (0..stream.wasm_decode_unsigned()?)
+        .map(|_| {
+            let value_type: Type = {
+                let byte = stream.get::<u8>().ok_or(DecodeError::UnexpectedStreamEnd)?;
+                byte
+                    .try_into()
+                    .map_err(|_| EnumType::Type.as_decode_error(byte))?
+            };
+    
+            let mutability: Mutability = {
+                let byte = stream.get::<u8>().ok_or(DecodeError::UnexpectedStreamEnd)?;
+                byte
+                    .try_into()
+                    .map_err(|_| EnumType::Mutability.as_decode_error(byte))?
+            };
+
+            Ok(GlobalDescriptor {
+                value_type,
+                mutability,
+                expression: decode_expression(
+                    &mut stream,
+                    function_types,
+                    function_type_idx,
+                    &[],
+                    &[],
+                    &[],
+                    &[value_type]
+                )?,
+            })
+        })
+        .collect()
+}
+
+fn decode_expression<'b, 't>(
+    stream: &'b mut BinaryInputStream<'t>,
+    function_types: &'b [FunctionType],
+    function_type_idx: &'b [u32],
+    locals: &'b [Type],
+    globals: &'b [GlobalDescriptor],
+    inputs: &'b [Type],
+    outputs: &'b [Type],
+) -> Result<Expression, DecodeError> where 't: 'b {
+    let instructions = decode_block(
         stream,
         function_types,
         function_type_idx,
@@ -337,7 +367,11 @@ impl ModuleImpl {
         };
 
         let globals: Vec<GlobalDescriptor> = if let Some(bits) = sections.get(&types::SectionID::Global) {
-            decode_global_section(bits)?
+            decode_global_section(
+                bits,
+                &function_types,
+                &function_type_idx,
+            )?
         } else {
             Vec::new()
         };

@@ -115,6 +115,22 @@ pub trait NativeValueSet: Sized {
     fn try_from_values(values: &[Value]) -> Option<Self>;
 }
 
+impl NativeValueSet for () {
+    const VALUE_TYPES: &'static [Type] = &[];
+
+    fn into_values(self) -> Vec<Value> {
+        Vec::new()
+    }
+
+    fn try_from_values(values: &[Value]) -> Option<Self> {
+        if values.is_empty() {
+            Some(())
+        } else {
+            None
+        }
+    }
+}
+
 impl<T: NativeValue> NativeValueSet for T {
     const VALUE_TYPES: &'static [Type] = &[T::VALUE_TYPE];
 
@@ -341,30 +357,49 @@ pub struct TableType {
 unsafe impl bytemuck::Zeroable for Header {}
 unsafe impl bytemuck::AnyBitPattern for Header {}
 
+/// WASM magic number
 pub const WASM_MAGIC: [u8; 4] = [0x00, 0x61, 0x73, 0x6D];
+
+/// WAMS version number
 pub const WASM_VERSION: [u8; 4] = [0x01, 0x00, 0x00, 0x00];
+
+/// WASM functype magic
 pub const WASM_FUNCTYPE_MAGIC: u8 = 0x60;
 
+/// WASM file header representation structure
 #[repr(packed)]
 #[derive(Copy, Clone, Hash, PartialEq, Eq)]
 pub struct Header {
+    /// Magic number
     pub magic: [u8; 4],
+
+    /// Version magic number
     pub version: [u8; 4],
-}
+} // struct Header
 
 impl Header {
-    pub fn validate(&self) -> bool {
+    /// Header validation function
+    /// * Returns true if header is correct supported WASM header
+    pub fn validate(self) -> bool {
         self.magic == WASM_MAGIC && self.version == WASM_VERSION
-    }
+    } // fn validate
 }
 
+/// Export value type representation enumeration
 #[derive(Copy, Clone, Hash, PartialEq, Eq)]
 pub enum ExportType {
+    /// Function
     Function = 0,
+
+    /// Table
     Table = 1,
+
+    /// Memory block
     Memory = 2,
+
+    /// Global value
     Global = 3,
-}
+} // enum ExportType
 
 impl TryFrom<u8> for ExportType {
     type Error = ();
@@ -374,20 +409,46 @@ impl TryFrom<u8> for ExportType {
             0 => Ok(ExportType::Function),
             1 => Ok(ExportType::Table),
             2 => Ok(ExportType::Memory),
-            4 => Ok(ExportType::Global),
+            3 => Ok(ExportType::Global),
             _ => Err(()),
         }
     }
 }
 
+/// Import representation enumeration
 pub enum ImportDescriptor {
-    Function { type_index: u32 },
-    Table { reference_type: ReferenceType, limits: Limits },
-    Memory { page_count_limits: Limits },
-    Global { ty: Type, mutability: Mutability },
-}
+    /// Function
+    Function {
+        /// Index of function type
+        type_index: u32
+    },
+    /// Table
+    Table {
+        /// Type of table
+        ty: TableType,
+    },
+    /// Memory block
+    Memory {
+        /// Limits of page count
+        page_count_limits: Limits,
+    },
+    /// Global variable
+    Global {
+        /// Value type
+        ty: Type,
 
+        /// Mutability
+        mutability: Mutability,
+    },
+} // enum ImportDescriptor
+
+/// Export descriptor representation structure
 pub struct ExportDescriptor {
+    /// Export type
     pub ty: ExportType,
+
+    /// Index
     pub index: u32,
-}
+} // enum ExportDescriptor
+
+// file types.rs

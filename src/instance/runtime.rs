@@ -1,13 +1,16 @@
-use crate::{instruction::{self, BlockType}, types::{self, FunctionType, Value}, util::binary_stream::BinaryInputStream, Expression, InstanceImpl, Mutability, NumberType, Type};
+use crate::{instruction, types::Value, util::binary_stream::BinaryInputStream, Expression, InstanceImpl, Mutability, Type};
 use super::{BlockExecutionResult, StackItem};
 
 impl InstanceImpl {
+    /// Function by identifier callign function
+    /// * `func_id` - index of function to call
+    /// * returns block execution result, if executed
     pub(crate) fn call_by_id(&mut self, func_id: u32) -> Option<BlockExecutionResult> {
         let module = self.module.clone();
+
         let func = module.functions.get(func_id as usize)?;
         let func_ty = module.types.get(func.type_id as usize)?;
 
-        // iiiu, but quite performant iiiu))
         if self.stack.len() < func_ty.inputs.len() {
             return None;
         }
@@ -37,8 +40,14 @@ impl InstanceImpl {
         } else {
             Some(BlockExecutionResult::Ok)
         }
-    }
+    } // fn call_by_id
 
+    /// Block execution function
+    /// * `inputs` - count of input values on stack
+    /// * `outputs` - count of output values on stack
+    /// * `block` - sources
+    /// * `locals` - local variable values
+    /// * returns block execution result
     fn exec_block(&mut self, inputs: usize, outputs: usize, block: &[u8], locals: &mut [StackItem]) -> Option<BlockExecutionResult> {
         if self.trapped {
             panic!("Can't execute while trapped");
@@ -66,7 +75,17 @@ impl InstanceImpl {
             }
 
             macro_rules! top {
-                ($exp_t: ident) => (unsafe { self.stack.last_mut()?.$exp_t() } );
+                ($exp_t: ident) => {
+                    {
+                        // this sintax is required, because #[allow(...)] is experimental for expressions
+                        let v;
+                        #[allow(unused_unsafe)]
+                        unsafe {
+                            v = self.stack.last_mut()?.$exp_t();
+                        }
+                        v
+                    }
+                };
                 () => (self.stack.last_mut()?);
             }
 
@@ -80,11 +99,15 @@ impl InstanceImpl {
             }
 
             macro_rules! load {
-                ($t: ty, $addr: expr) => { self.memory.load_unaligned::<$t>(($addr) as usize)? };
+                ($t: ty, $addr: expr) => {
+                    self.memory.load_unaligned::<$t>(($addr) as usize)?
+                };
             }
 
             macro_rules! store {
-                ($t: ty, $addr: expr, $val: expr) => { self.memory.store::<$t>(($addr) as usize, $val)? };
+                ($t: ty, $addr: expr, $val: expr) => {
+                    self.memory.store_unaligned::<$t>(($addr) as usize, $val)?
+                };
             }
 
             macro_rules! exec_block {
@@ -125,24 +148,16 @@ impl InstanceImpl {
                 instruction::Instruction::If => {
                     let header = stream.get::<instruction::BranchHeader>()?;
 
-                    let code = stream.get_byte_slice(header.then_length as usize)?;
+                    let then_code = stream.get_byte_slice(header.then_length as usize)?;
+                    let else_code = stream.get_byte_slice(header.else_length as usize)?;
 
                     let (inputs, outputs) = (header.consume_count as usize, header.output_count as usize);
 
                     if pop!(as_u32) != 0 {
-                        exec_block!(inputs, outputs, code, locals);
-
-                        if stream.check::<u8>()? == instruction::Instruction::Else as u8 {
-                            stream.skip(1)?;
-                            stream.skip(header.else_length as usize)?;
-                        }
-                    } else if stream.check::<u8>()? == instruction::Instruction::Else as u8 {
-                        stream.skip(1)?;
-                        exec_block!(inputs, outputs, stream.get_byte_slice(header.else_length as usize)?, locals);
+                        exec_block!(inputs, outputs, then_code, locals);
+                    } else if header.else_length != 0 {
+                        exec_block!(inputs, outputs, else_code, locals);
                     }
-                }
-                instruction::Instruction::Else => {
-                    panic!("'Else' instruction must occur after 'If' instruction only.");
                 }
                 instruction::Instruction::Br => {
 
@@ -358,16 +373,11 @@ impl InstanceImpl {
                 instruction::Instruction::F64ConvertI64S => *top!() = (top!(as_i64) as f64).into(),
                 instruction::Instruction::F64ConvertI64U => *top!() = (top!(as_u64) as f64).into(),
                 instruction::Instruction::F64PromoteF32 => *top!() = (top!(as_f32) as f64).into(),
-                instruction::Instruction::I32ReinterpretF32 => *top!() = f32::to_bits(top!(as_f32)).into(),
-                instruction::Instruction::I64ReinterpretF64 => *top!() = f64::to_bits(top!(as_f64)).into(),
-                instruction::Instruction::F32ReinterpretI32 => *top!() = f32::from_bits(top!(as_u32)).into(),
-                instruction::Instruction::F64ReinterpretI64 => *top!() = f64::from_bits(top!(as_u64)).into(),
                 instruction::Instruction::I32Extend8S  => *top!() = (unsafe { std::mem::transmute::< u8,  i8>((top!(as_u32) & 0x000000FF) as  u8) } as i32).into(),
                 instruction::Instruction::I32Extend16S => *top!() = (unsafe { std::mem::transmute::<u16, i16>((top!(as_u32) & 0x0000FFFF) as u16) } as i32).into(),
                 instruction::Instruction::I64Extend8S  => *top!() = (unsafe { std::mem::transmute::< u8,  i8>((top!(as_u64) & 0x000000FF) as  u8) } as i64).into(),
                 instruction::Instruction::I64Extend16S => *top!() = (unsafe { std::mem::transmute::<u16, i16>((top!(as_u64) & 0x0000FFFF) as u16) } as i64).into(),
                 instruction::Instruction::I64Extend32S => *top!() = (unsafe { std::mem::transmute::<u32, i32>((top!(as_u64) & 0xFFFFFFFF) as u32) } as i64).into(),
-                instruction::Instruction::RefFunc => {}
                 instruction::Instruction::System => todo!("TODO: Implement system instruction extension"),
                 instruction::Instruction::Vector => todo!("TODO: Implement vector instruction extension"),
             }
@@ -389,31 +399,40 @@ impl InstanceImpl {
         }
     } // fn exec_block
 
-
+    /// Expression execution function.
+    /// * `expr` - expression reference
+    /// * `expected_result` - expected types of result
+    /// * Returns vector of values
     pub fn exec_expression(&mut self, expr: &Expression, expected_result: &[Type]) -> Option<Vec<Value>> {
-        if expected_result.len() > 1 {
-            panic!("TODO: fix expression execution...");
-        }
-
         self.exec_block(0, expected_result.len(), &expr.instructions, &mut [])?;
 
-        return Some(self.stack
+        let result = self.stack
             .get(self.stack.len().checked_sub(expected_result.len())?..self.stack.len())?
             .iter()
             .zip(expected_result.iter())
             .map(|(elem, ty)| elem.to_value(*ty))
-            .collect::<Vec<Value>>())
-    }
+            .collect::<Vec<Value>>();
 
+        self.stack.truncate(self.stack.len() - expected_result.len());
+        Some(result)
+    } // fn expected_result
+
+    /// Function by ID and arguments calling function
+    /// * `id` - function identifier
+    /// * `arguments` - function arguments
+    /// * Returns function result
     pub fn call(&mut self, id: u32, arguments: &[Value]) -> Option<Vec<Value>> {
         let module = self.module.clone();
 
         let func = module.functions.get(id as usize)?;
         let func_ty = module.types.get(func.type_id as usize)?;
 
-        for a in arguments {
-            self.stack.push(StackItem::from(*a));
-        }
+        // push arguments into stack
+        self.stack.extend(arguments
+            .into_iter()
+            .copied()
+            .map(StackItem::from)
+        );
 
         if let BlockExecutionResult::Branch { depth } = self.call_by_id(id)? {
             if depth > 0 {
@@ -426,15 +445,17 @@ impl InstanceImpl {
             return None;
         }
         
-        let mut s = Vec::new();
-        std::mem::swap(&mut s, &mut self.stack);
+        let mut res = Vec::new();
+        std::mem::swap(&mut res, &mut self.stack);
 
-        Some(s
+        Some(res
             .iter()
             .rev()
             .zip(func_ty.outputs.iter())
             .map(|(item, ty)| item.to_value(*ty))
             .collect::<Vec<_>>()
         )
-    }
-}
+    } // fn call
+} // impl InstanceImpl
+
+// file runtime.rs

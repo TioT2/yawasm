@@ -1,19 +1,33 @@
-use crate::{instruction::{self, BlockHeader, BranchHeader, BlockType}, module::{opcode, wasm::{CodeValidationError, EnumType}, GlobalDescriptor}, types::FunctionType, util::binary_stream::{BinaryInputStream, BinaryOutputStream}, Mutability, NumberType, ReferenceType, Type, Value};
+use crate::{
+    instruction::{self, BlockHeader, BranchHeader, BlockType},
+    module::{opcode, wasm::{CodeValidationError, EnumType}, GlobalDescriptor},
+    types::FunctionType,
+    util::binary_stream::{BinaryInputStream, BinaryOutputStream},
+    Mutability,
+    ReferenceType,
+    Type
+};
 
 use super::DecodeError;
 
 /// Input/Output ftype blocktype decoder
 struct BlockTypeIODecoder {
+    /// Just data binding
     out_binding: [Type; 1],
 }
 
 impl BlockTypeIODecoder {
+    /// inout decoder representation structure
     pub fn new() -> Self {
         Self {
             out_binding: [Type::F32]
         }
-    }
+    } // fn new
 
+    /// Types getting function
+    /// * `ty` - block to get type of
+    /// * `func_types` - arrray of module function types
+    /// * Returns Option<inputs, outputs>
     pub fn get<'t>(&'t mut self, ty: BlockType, func_types: &'t [FunctionType]) -> Option<(&'t [Type], &'t [Type])> {
         Some(match ty {
             BlockType::Functional(fn_id) => {
@@ -28,38 +42,53 @@ impl BlockTypeIODecoder {
                 (&[], &[])
             }
         })
-    }
+    } // fn get
 }
 
-#[derive(Clone)]
-enum ValidationFrameType {
-    Block,
-    Loop,
-}
-
+/// Validation stack frame representation structure
 #[derive(Clone)]
 struct ValidationStackFrame {
+    /// Expected result then block ends
     pub expected_result: Vec<Type>,
+
+    /// Type stack
     pub stack: Vec<Type>,
-}
+} // struct ValidationStackFrame
 
-struct BlockDecoder<'t> {
-    stream: &'t mut BinaryInputStream<'t>,
-    // output: BinaryOutputStream,
-    function_types: &'t [FunctionType],
-    function_type_idx: &'t [u32],
-    globals: &'t [GlobalDescriptor],
-    locals: &'t [Type],
+/// Block decode context
+struct DecodeContext<'t, 'b> where 't: 'b {
+    /// Stream to read raw bytecode from
+    stream: &'b mut BinaryInputStream<'t>,
+
+    /// Module function type set
+    function_types: &'b [FunctionType],
+
+    /// Module function type indices
+    function_type_idx: &'b [u32],
+
+    /// Module global descriptors
+    globals: &'b [GlobalDescriptor],
+
+    /// Module local descriptors
+    locals: &'b [Type],
+
+    /// Stack of validation frames, used for better safety
     stack: Vec<ValidationStackFrame>,
-}
+} // struct DecodeContext
 
-impl<'t> BlockDecoder<'t> {
+impl<'t, 'b> DecodeContext<'t, 'b> {
+    /// Decode context initialization function
+    /// * `stream` - stream to read data from
+    /// * `function_types` - module function types
+    /// * `function_type_idx` - indices of functions' function types
+    /// * `locals` - local descriptors
+    /// * `globals` - global descriptors
     pub fn new(
-        stream: &'t mut BinaryInputStream<'t>,
-        function_types: &'t [FunctionType],
-        function_type_idx: &'t [u32],
-        locals: &'t [Type],
-        globals: &'t [GlobalDescriptor]
+        stream: &'b mut BinaryInputStream<'t>,
+        function_types: &'b [FunctionType],
+        function_type_idx: &'b [u32],
+        locals: &'b [Type],
+        globals: &'b [GlobalDescriptor]
     ) -> Self {
         Self {
             function_types,
@@ -69,8 +98,12 @@ impl<'t> BlockDecoder<'t> {
             stream,
             stack: Vec::new(),
         }
-    }
+    } // fn new
 
+    /// Block decode function
+    /// * `inputs` - block input types
+    /// * `expected_outputs` - block output types
+    /// * Returns result with vector of internal bytecode and trailing WASM opcode
     pub fn decode_block(&mut self, inputs: &[Type], expected_outputs: &[Type]) -> Result<(Vec<u8>, opcode::Main), DecodeError> {
         // Stack of operand types, needed for validation and further type remove
         let mut output_stream = BinaryOutputStream::new();
@@ -262,7 +295,10 @@ impl<'t> BlockDecoder<'t> {
                     unary_operation!(F64, F32);
                     output_stream.write(&instruction.unwrap());
                 }
-                Opcode::F32ReinterpretI32 | Opcode::F32ConvertI32S | Opcode::F32ConvertI32U => {
+                Opcode::F32ReinterpretI32 => {
+                    unary_operation!(I32, F32);
+                }
+                Opcode::F32ConvertI32S | Opcode::F32ConvertI32U => {
                     unary_operation!(I32, F32);
                     output_stream.write(&instruction.unwrap());
                 }
@@ -310,7 +346,10 @@ impl<'t> BlockDecoder<'t> {
                     unary_operation!(F32, F64);
                     output_stream.write(&instruction.unwrap());
                 }
-                Opcode::F64ReinterpretI64 | Opcode::F64ConvertI64S | Opcode::F64ConvertI64U => {
+                Opcode::F64ReinterpretI64 => {
+                    unary_operation!(I64, F64);
+                }
+                Opcode::F64ConvertI64S | Opcode::F64ConvertI64U => {
                     unary_operation!(I64, F64);
                     output_stream.write(&instruction.unwrap());
                 }
@@ -547,6 +586,7 @@ impl<'t> BlockDecoder<'t> {
                     output_stream.write(&instruction.unwrap());
                     output_stream.write(&(global_index as u32));
                 }
+
                 Opcode::GlobalSet => {
                     let global_index = self.stream.wasm_decode_unsigned()?;
                     let desc = self.globals.get(global_index).ok_or(CodeValidationError::UnknownGlobalIndex)?;
@@ -563,6 +603,7 @@ impl<'t> BlockDecoder<'t> {
                     output_stream.write(&instruction.unwrap());
                     output_stream.write(&(global_index as u32));
                 }
+
                 Opcode::LocalGet => {
                     let local_index = self.stream.wasm_decode_unsigned()?;
                     let ty = self.locals.get(local_index).ok_or(CodeValidationError::UnknownLocalIndex)?;
@@ -571,6 +612,7 @@ impl<'t> BlockDecoder<'t> {
                     output_stream.write(&instruction::Instruction::LocalGet);
                     output_stream.write(&(local_index as u32));
                 }
+
                 Opcode::LocalSet => {
                     let local_index = self.stream.wasm_decode_unsigned()?;
                     let actual = *self.locals.get(local_index).ok_or(CodeValidationError::UnknownLocalIndex)?;
@@ -703,8 +745,12 @@ impl<'t> BlockDecoder<'t> {
         } else {
             Err(CodeValidationError::InvalidStackTop.into())
         }
-    }
+    } // fn decode_block
 
+    /// Decode function
+    /// * `inputs` - set of stack inputs
+    /// * `outputs` - set of expected stack outputs
+    /// * Returns result with vector of internal bytecode
     pub fn decode(mut self, inputs: &[Type], expected_outputs: &[Type]) -> Result<Vec<u8>, DecodeError> {
         let (code, ending_instruction) = self.decode_block(inputs, expected_outputs)?;
 
@@ -713,20 +759,30 @@ impl<'t> BlockDecoder<'t> {
         } else {
             Err(DecodeError::InvalidBlockEnd)
         }
-    }
-}
+    } // fn decode
+} // impl DecodeContext
 
 /// Validated block decode function
-pub(super) fn decode_block_validated<'t>(
-    stream: &'t mut BinaryInputStream<'t>,
-    function_types: &'t [FunctionType],
-    function_type_idx: &'t [u32],
-    local_types: &'t [Type],
-    globals: &'t [GlobalDescriptor],
-    initial_values: &'t [Type],
-    expected_result: &'t [Type],
-) -> Result<Vec<u8>, DecodeError> {
-    let decoder = BlockDecoder::new(stream, function_types, function_type_idx, local_types, globals);
+/// * `stream` - stream to read
+/// * `function_types` - types of functions in context
+/// * `function_type_idx` - indices of function types of functions
+/// * `local_types` - types of local variables
+/// * `globals` - global variables
+/// * `initial_values` - set of values initially moved to stack
+/// * `expected_result` - expected stack at block execution end
+/// * Returns vector of decoded bytecode or decode error
+pub(super) fn decode_block<'t, 'b>(
+    stream: &'b mut BinaryInputStream<'t>,
+    function_types: &'b [FunctionType],
+    function_type_idx: &'b [u32],
+    local_types: &'b [Type],
+    globals: &'b [GlobalDescriptor],
+    initial_values: &'b [Type],
+    expected_result: &'b [Type],
+) -> Result<Vec<u8>, DecodeError> 
+where 't: 'b {
+    DecodeContext::new(stream, function_types, function_type_idx, local_types, globals)
+        .decode(initial_values, expected_result)
+} // fn decode_block
 
-    decoder.decode(initial_values, expected_result)
-}
+// file block_decode.rs

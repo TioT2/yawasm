@@ -1,4 +1,4 @@
-use crate::types::{Limits, TableType};
+use crate::types::TableType;
 
 pub struct Table {
     ty: TableType,

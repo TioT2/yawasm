@@ -45,10 +45,6 @@ impl<'t> BinaryInputStream<'t> {
             .flatten()
     }
 
-    pub fn check_slice<T: bytemuck::AnyBitPattern>(&self, count: usize) -> Option<&'t [T]> {
-        self.check_byte_slice(std::mem::size_of::<T>() * count).map(bytemuck::cast_slice::<u8, T>)
-    }
-
     pub fn skip(&mut self, byte_count: usize) -> Option<()> {
         if self.bytes.len() < byte_count {
             None
@@ -56,10 +52,6 @@ impl<'t> BinaryInputStream<'t> {
             self.bytes = self.bytes.split_at(byte_count).1;
             Some(())
         }
-    }
-
-    pub fn rest(self) -> &'t [u8] {
-        self.bytes
     }
 }
 
@@ -78,10 +70,6 @@ impl BinaryOutputStream {
 
     pub fn write<T: bytemuck::NoUninit>(&mut self, data: &T) {
         self.collector.extend_from_slice(bytemuck::bytes_of(data))
-    }
-
-    pub fn len(&self) -> usize {
-        self.collector.len()
     }
 
     pub fn finish(self) -> Vec<u8> {
