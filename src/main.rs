@@ -53,10 +53,10 @@ mod tests {
             .as_typed_callable::<(), i32>()
             .expect("Error hard-typing function");
 
-        assert_eq!(wasm_get_counter(()), Some(0));
-        wasm_inc_counter(());
-        wasm_inc_counter(());
-        assert_eq!(wasm_get_counter(()), Some(2));
+        assert_eq!(wasm_get_counter(()), Ok(0));
+        _ = wasm_inc_counter(());
+        _ = wasm_inc_counter(());
+        assert_eq!(wasm_get_counter(()), Ok(2));
     } // fn globals
 } // mod tests
 
