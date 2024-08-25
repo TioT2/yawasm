@@ -1,23 +1,47 @@
 mod block_decode;
+mod opcode;
 
-use std::{collections::HashMap, fmt::Binary};
+pub type Opcode = opcode::Main;
+pub type VectorOpcode = opcode::Vector;
+pub type SystemOpcode = opcode::System;
+
+use std::collections::HashMap;
 
 use block_decode::decode_block;
 
 use crate::{instruction, types::{self, FunctionType}, util::binary_stream::BinaryInputStream, Function, Mutability, Type};
 use super::{Expression, GlobalDescriptor, ModuleImpl};
 
-
+/// WASM enumeration type representation structure
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum EnumType {
+    /// Opcode
     Opcode,
+
+    /// System opcode
+    SystemOpcode,
+
+    /// Vector opcode
+    VectorOpcode,
+
+    /// Section identifier
     SectionId,
+
+    /// Limit type
     LimitType,
+
+    /// Reference type
     ReferenceType,
+
+    /// Export type
     ExportType,
+
+    /// Global mutability
     Mutability,
+
+    /// Value type
     Type,
-}
+} // enum EnumType
 
 impl std::fmt::Display for EnumType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -29,11 +53,16 @@ impl std::fmt::Display for EnumType {
             Self::ExportType => "export type",
             Self::Mutability => "mutability",
             Self::Type => "value type",
+            Self::SystemOpcode => "system opcode",
+            Self::VectorOpcode => "vector opcode",
         })
-    }
-}
+    } // fn fmt
+} // impl std::fmt::Display for EnumType
 
 impl EnumType {
+    /// Enumeration type into decode error transforming function
+    /// * `value` - byte, that caused decode error
+    /// * Returns decode error  
     pub fn as_decode_error(self, value: u8) -> DecodeError {
         DecodeError::EnumError { ty: self, value }
     }
@@ -41,23 +70,45 @@ impl EnumType {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum DecodeError {
+    /// Enumeration decode error
     EnumError {
+        /// Expected enumeration type
         ty: EnumType,
+
+        /// Enumeration value
         value: u8,
     },
 
+    /// Sizes unmatched
     FunctionTypesSizeAndCodeSizeUnmatched,
+
+    /// UTF8 name decode error
     Utf8DecodeError,
+
+    /// Invalid module magic number
     InvalidModuleMagic,
+
+    /// Unsigned number decode error
     UnsignedDecodeError,
-    SignedDecodeError { bit_count: u32 },
+
+    /// Signed decode error
+    SignedDecodeError {
+        /// Count of decoded bits
+        bit_count: u32
+    },
+
+    /// Unexpected stream end
     UnexpectedStreamEnd,
 
+    /// Unsupported WASM feature
     UnsupportedFeature,
+
+    /// Invalid block end
     InvalidBlockEnd,
 
+    /// Execution validation error
     CodeValidationError(CodeValidationError),
-}
+} // enum DecodeError
 
 impl std::fmt::Display for DecodeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -73,59 +124,98 @@ impl std::fmt::Display for DecodeError {
             Self::UnsupportedFeature => write!(f, "unsupported feature (e.g. system/vector extension occured)"),
             Self::InvalidBlockEnd => write!(f, "invalid block ending opcode"),
         }
-    }
-}
+    } // fn fmt
+} // impl std::fmt::Display for DecodeError
 
+/// Code execution validation error
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum CodeValidationError {
+    /// Unexpected expression end
     UnexpectedExpressionEnd(u8),
+
+    /// Invalid stack top
     InvalidStackTop,
+
+    /// Lack of types in typed select
     NoTypesInTypedSelect,
 
+    /// Invalid memory instruction contents
     InvalidMemoryInstructionData,
+
+    /// Unknown function type index
     UnknownFunctionTypeIndex,
+
+    /// Unknown function index
     UnknownFunctionIndex,
+
+    /// Unknown local variable index
     UnknownLocalIndex,
+
+    /// Unknown global variable index
     UnknownGlobalIndex,
 
+    /// Unexpected else opcode occurence
     UnexpectedElseOpcode,
+
+    /// Invalid branching depth
     InvalidBranchDepth,
+
+    /// No operands for math operatoin
     NoOperands,
+
+    /// Trying to mutate constant global variable
     MutatingConstantGlobal,
+
+    /// Unexpected type of operand
     UnexpectedOperandType {
+        /// Expected type
         expected: Type,
+
+        /// Actual type
         actual: Type,
     },
-}
+} // enum CodeValidationError
 
 impl From<CodeValidationError> for DecodeError {
     fn from(value: CodeValidationError) -> Self {
         Self::CodeValidationError(value)
     }
-}
+} // impl From<CodeValidationError> for DecodeError
 
 impl std::fmt::Display for CodeValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "todo!")
     }
-}
+} // impl std::fmt::Display for CodeValidationError
 
 // Own binary stream implementation
 impl<'t> BinaryInputStream<'t> {
+    /// Vector decode function
+    /// * `decode_func` - function to decode values by
+    /// * Returns vector of decoded values
     pub fn wasm_decode_vector<DT: bytemuck::AnyBitPattern, T>(&mut self, decode_func: &dyn Fn(&DT) -> Option<T>) -> Option<Vec<T>> {
         let len = self.decode_unsigned()?;
-        self.get_slice::<DT>(len)?.iter().map(decode_func).collect()
-    }
+        self
+            .get_slice::<DT>(len)?
+            .iter()
+            .map(decode_func)
+            .collect()
+    } // fn wasm_decode_error
 
+    /// Limits decode function
+    /// * Returns decoded limits
     pub fn wasm_decode_limits(&mut self) -> Result<types::Limits, DecodeError> {
         let t = self.get::<u8>().ok_or(DecodeError::UnexpectedStreamEnd)?;
+
         match t {
             0 => Ok(types::Limits { min: self.decode_unsigned().ok_or(DecodeError::UnsignedDecodeError)? as u32, max: None }),
             1 => Ok(types::Limits { min: self.decode_unsigned().ok_or(DecodeError::UnsignedDecodeError)? as u32, max: Some(self.decode_unsigned().ok_or(DecodeError::UnsignedDecodeError)? as u32) }),
             _ => Err(EnumType::LimitType.as_decode_error(t)),
         }
-    }
+    } // fn wasm_decode_limits
 
+    /// Block type decode function
+    /// * Returns block type
     pub fn wasm_decode_block_type(&mut self) -> Result<instruction::BlockType, DecodeError> {
         let byte = self.check::<u8>().ok_or(DecodeError::UnexpectedStreamEnd)?;
 
@@ -138,13 +228,18 @@ impl<'t> BinaryInputStream<'t> {
         } else {
             instruction::BlockType::Functional(self.decode_signed::<32>().ok_or(DecodeError::SignedDecodeError { bit_count: 32 })? as u32)
         })
-    }
+    } // fn wasm_decode_block_type
 
+    /// Unsigned number decode function
+    /// * Returns decoded number
     pub fn wasm_decode_unsigned(&mut self) -> Result<usize, DecodeError> {
         self.decode_unsigned().ok_or(DecodeError::UnsignedDecodeError)
-    }
-}
+    } // fn wasm_decode_unsigned
+} // impl BinaryInputStream
 
+/// Section table decode function
+/// * `bits` - sections data
+/// * Returns map with (section type -> section bits) map
 fn decode_sections<'t>(bits: &'t [u8]) -> Result<HashMap<types::SectionID, &'t [u8]>, DecodeError> {
     let mut stream = BinaryInputStream::new(bits);
 
@@ -162,8 +257,11 @@ fn decode_sections<'t>(bits: &'t [u8]) -> Result<HashMap<types::SectionID, &'t [
     }
 
     Ok(sections)
-}
+} // fn decode_section
 
+/// Function type section decode function
+/// * section - section bits
+/// * Returns vector of decoded function types
 fn decode_function_type_section(section: &[u8]) -> Result<Vec<types::FunctionType>, DecodeError> {
     let mut stream = BinaryInputStream::new(section);
 
@@ -184,13 +282,20 @@ fn decode_function_type_section(section: &[u8]) -> Result<Vec<types::FunctionTyp
             })
         })
         .collect::<Result<Vec<types::FunctionType>, DecodeError>>()
-}
+} // fn decode_function_type_section
 
+/// Function section decode function
+/// * `section` - section byte array
+/// * Returns vector of function type indices
 fn decode_function_section(section: &[u8]) -> Result<Vec<u32>, DecodeError> {
     let mut stream = BinaryInputStream::new(section);
 
     (0..stream.decode_unsigned().ok_or(DecodeError::UnexpectedStreamEnd)?)
-        .map(|_| stream.decode_unsigned().map(|v| v as u32).ok_or(DecodeError::UnexpectedStreamEnd))
+        .map(|_| stream
+            .decode_unsigned()
+            .map(|v| v as u32)
+            .ok_or(DecodeError::UnexpectedStreamEnd)
+        )
         .collect::<Result<Vec<u32>, DecodeError>>()
 } // fn decode_function_section
 
@@ -256,6 +361,9 @@ fn decode_start_section(section: &[u8]) -> Result<u32, DecodeError> {
         .ok_or(DecodeError::UnsignedDecodeError)
 } // fn decode_start_section
 
+/// Code section decode function
+/// * `section` - section bytes
+/// * Returns vector of function bytecode blocks
 fn decode_code_section(section: &[u8]) -> Result<Vec<&[u8]>, DecodeError> {
     let mut stream = BinaryInputStream::new(section);
 
@@ -266,15 +374,13 @@ fn decode_code_section(section: &[u8]) -> Result<Vec<&[u8]>, DecodeError> {
             Ok(stream.get_byte_slice(length).ok_or(DecodeError::UnexpectedStreamEnd)?)
         })
         .collect::<Result<Vec<&[u8]>, DecodeError>>()
-}
-
-fn a<'t>(ft: &'t [FunctionType], s: &'t mut BinaryInputStream) -> Vec<u8> {
-    std::hint::black_box((s, ft));
-
-    vec![30, 47, 80]
-}
+} // fn decode_code_section
 
 /// Global section decode function
+/// * `section` - section bytes
+/// * `function_types` - known function types
+/// * `function_type_idx` - indices of function types
+/// * Returns global value descriptors
 fn decode_global_section<'t>(
     section: &'t [u8],
     function_types: &'t [FunctionType],
@@ -313,8 +419,17 @@ fn decode_global_section<'t>(
             })
         })
         .collect()
-}
+} // fn decode_global_section
 
+/// Expression decode function
+/// * `stream` - expression bytecode
+/// * `function_types` - known function types
+/// * `function_type_idx` - mapping (function index -> function type index)
+/// * `locals` - local variables in expression
+/// * `globals` - global variables in expression
+/// * `inputs` - function stack input types
+/// * `outputs` - function stack output types
+/// * Returns decoded expression
 fn decode_expression<'b, 't>(
     stream: &'b mut BinaryInputStream<'t>,
     function_types: &'b [FunctionType],
@@ -323,7 +438,8 @@ fn decode_expression<'b, 't>(
     globals: &'b [GlobalDescriptor],
     inputs: &'b [Type],
     outputs: &'b [Type],
-) -> Result<Expression, DecodeError> where 't: 'b {
+) -> Result<Expression, DecodeError>
+where 't: 'b {
     let instructions = decode_block(
         stream,
         function_types,
@@ -335,9 +451,12 @@ fn decode_expression<'b, 't>(
     )?;
 
     return Ok(Expression { instructions })
-}
+} // fn decode_expression
 
 impl ModuleImpl {
+    /// Module from WASM bytecode decode function
+    /// * `src` - module bytecode
+    /// * Returns decoded WASM module
     pub fn from_wasm(src: &[u8]) -> Result<Self, DecodeError> {
         // Sections
         let sections = decode_sections(src)?;
@@ -452,5 +571,7 @@ impl ModuleImpl {
             types: function_types,
             start,
         })
-    }
+    } // fn from_wasm
 } // impl Module
+
+// file mod.rs

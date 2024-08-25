@@ -1,4 +1,4 @@
-use crate::{instance::RuntimeError, instruction, types::Value, util::binary_stream::BinaryInputStream, Expression, InstanceImpl, Mutability, Type};
+use crate::{instance::RuntimeError, instruction, types::Value, util::binary_stream::BinaryInputStream, Expression, InstanceImpl, Type};
 use super::{BlockExecutionResult, CallError, StackItem};
 
 impl InstanceImpl {
@@ -204,9 +204,9 @@ impl InstanceImpl {
                 instruction::Instruction::LocalTee => {
                     *locals.get_mut(stream.get::<u32>().unwrap() as usize).unwrap() = *self.stack.last().unwrap();
                 }
-                instruction::Instruction::GlobalGet => push!(self.globals.get(stream.get::<u32>().unwrap() as usize).unwrap().value),
+                instruction::Instruction::GlobalGet => push!(*self.globals.get(stream.get::<u32>().unwrap() as usize).unwrap()),
                 instruction::Instruction::GlobalSet => {
-                    self.globals.get_mut(stream.get::<u32>().unwrap() as usize).unwrap().value = pop!();
+                    *self.globals.get_mut(stream.get::<u32>().unwrap() as usize).unwrap() = pop!();
                 }
                 instruction::Instruction::TableGet => {}
                 instruction::Instruction::TableSet => {}

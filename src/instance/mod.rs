@@ -3,21 +3,9 @@ mod item;
 
 use std::sync::Arc;
 
-use crate::{table::Table, Memory, ModuleImpl, Mutability, Type};
+use crate::{table::Table, Memory, ModuleImpl};
 
 pub(crate) use item::StackItem;
-
-/// Global variable representation structure
-pub(crate) struct Global {
-    /// Value
-    pub value: StackItem,
-
-    /// Type (idk, how it can be used)
-    pub ty: Type,
-
-    /// Mutability (useful, actually)
-    pub mutability: Mutability,
-} // struct Global
 
 /// WASM runtime error
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -60,7 +48,7 @@ pub struct InstanceImpl {
     tables: Vec<Table>,
 
     /// Global set
-    globals: Vec<Global>,
+    globals: Vec<StackItem>,
 
     /// fatal error flag
     trapped: bool,
@@ -77,11 +65,6 @@ pub(super) enum BlockExecutionResult {
     /// Branch started
     Branch { depth: u16 },
 } // enum BlockExecutionResult
-
-/// Instance create error
-pub enum InstanceCreateError {
-    GlobalInitializationRuntimeError,
-} // enum InstanceCreateError
 
 impl ModuleImpl {
     /// Instance create function
@@ -102,21 +85,18 @@ impl ModuleImpl {
         // Setup global variables separately all another module
         instance.globals = self.globals
             .iter()
-            .map(|descriptor| Ok(Global {
-                ty: descriptor.value_type,
-                mutability: descriptor.mutability,
-                value: instance
-                    .exec_expression(&descriptor.expression, &[descriptor.value_type])?
-                    .get(0)
-                    .copied()
-                    .unwrap()
-                    .into(),
-            }))
-            .collect::<Result<Vec<Global>, RuntimeError>>()?;
+            .map(|descriptor| Ok(instance
+                .exec_expression(&descriptor.expression, &[descriptor.value_type])?
+                .get(0)
+                .copied()
+                .unwrap()
+                .into()
+            ))
+            .collect::<Result<Vec<StackItem>, RuntimeError>>()?;
 
         // Call setup function
         if let Some(start_id) = self.start {
-            instance.call_by_id(start_id);
+            instance.call_by_id(start_id)?;
         }
 
         Ok(instance)

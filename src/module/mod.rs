@@ -1,5 +1,4 @@
-mod wasm;
-mod opcode;
+pub mod wasm;
 
 use std::collections::HashMap;
 
@@ -112,15 +111,16 @@ impl ModuleImpl {
     /// * Returns result with created module internal or error
     pub fn new(source: Source) -> Result<Self, ModuleCreateError> {
         match source {
-            Source::WASM(bits) => Self::from_wasm(bits).map_err(ModuleCreateError::WASMDeocdeError),
+            Source::WASM(bits) => Self::from_wasm(bits).map_err(ModuleCreateError::WASMDecodeError),
             Source::WAT(_) => unimplemented!("TODO: add WAT loading support to project"),
         }
+
     } // fn new
 }
 
 impl Into<ModuleCreateError> for wasm::DecodeError {
     fn into(self) -> ModuleCreateError {
-        ModuleCreateError::WASMDeocdeError(self)
+        ModuleCreateError::WASMDecodeError(self)
     }
 }
 
@@ -131,13 +131,13 @@ pub enum ModuleCreateError {
     WATDecodeError,
 
     /// WASM validation error,
-    WASMDeocdeError(wasm::DecodeError),
+    WASMDecodeError(wasm::DecodeError),
 } // enum ModuleCreateError
 
 impl std::fmt::Display for ModuleCreateError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            ModuleCreateError::WASMDeocdeError(_) => "WASM file contents decode error",
+            ModuleCreateError::WASMDecodeError(_) => "WASM file contents decode error",
             ModuleCreateError::WATDecodeError => "WAT file contents decode error",
         })
     } // fn fmt

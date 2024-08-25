@@ -1,6 +1,6 @@
 use crate::{
-    instruction::{self, BlockHeader, BranchHeader, BlockType},
-    module::{opcode, wasm::{CodeValidationError, EnumType}, GlobalDescriptor},
+    instruction::{self, BlockHeader, BlockType, BranchHeader},
+    module::GlobalDescriptor,
     types::FunctionType,
     util::binary_stream::{BinaryInputStream, BinaryOutputStream},
     Mutability,
@@ -8,7 +8,7 @@ use crate::{
     Type
 };
 
-use super::DecodeError;
+use super::{DecodeError, Opcode, CodeValidationError, EnumType};
 
 /// Input/Output ftype blocktype decoder
 struct BlockTypeIODecoder {
@@ -104,7 +104,7 @@ impl<'t, 'b> DecodeContext<'t, 'b> {
     /// * `inputs` - block input types
     /// * `expected_outputs` - block output types
     /// * Returns result with vector of internal bytecode and trailing WASM opcode
-    pub fn decode_block(&mut self, inputs: &[Type], expected_outputs: &[Type]) -> Result<(Vec<u8>, opcode::Main), DecodeError> {
+    pub fn decode_block(&mut self, inputs: &[Type], expected_outputs: &[Type]) -> Result<(Vec<u8>, Opcode), DecodeError> {
         // Stack of operand types, needed for validation and further type remove
         let mut output_stream = BinaryOutputStream::new();
 
@@ -136,8 +136,6 @@ impl<'t, 'b> DecodeContext<'t, 'b> {
             stack: inputs.to_vec(),
             expected_result: expected_outputs.to_vec(),
         };
-
-        type Opcode = opcode::Main;
 
         macro_rules! pop {
             ($t: ident) => {
@@ -754,7 +752,7 @@ impl<'t, 'b> DecodeContext<'t, 'b> {
     pub fn decode(mut self, inputs: &[Type], expected_outputs: &[Type]) -> Result<Vec<u8>, DecodeError> {
         let (code, ending_instruction) = self.decode_block(inputs, expected_outputs)?;
 
-        if ending_instruction == opcode::Main::ExpressionEnd {
+        if ending_instruction == Opcode::ExpressionEnd {
             Ok(code)
         } else {
             Err(DecodeError::InvalidBlockEnd)
