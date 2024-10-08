@@ -170,7 +170,6 @@ impl InstanceImpl {
                     }
                 }
                 instruction::Instruction::Br => {
-
                 }
                 instruction::Instruction::BrIf => {
 
@@ -179,7 +178,10 @@ impl InstanceImpl {
                     break 'instruction_exec BlockExecutionResult::Return;
                 }
                 instruction::Instruction::BrTable => {
-
+                    // let mod_count = stream.get::<u32>().unwrap();
+                    // let v = pop!(as_u32).max(mod_count);
+                    // let depth = (0..v).map(|_| stream.get::<u32>().unwrap()).last().unwrap();
+                    // stream.skip(std::mem::size_of::<u32>() * (mod_count - v) as usize);
                 }
                 instruction::Instruction::Call => {
                     match self.call_by_id(stream.get::<u32>().unwrap())? {
@@ -189,13 +191,13 @@ impl InstanceImpl {
                 }
                 instruction::Instruction::CallIndirect => {}
                 instruction::Instruction::Drop => _ = pop!(),
-                instruction::Instruction::Select => push!({
+                instruction::Instruction::Select => {
                     let cond = pop!(as_i32);
                     let lhs = pop!();
                     let rhs = pop!();
 
-                    if cond != 0 { rhs } else { lhs }
-                }),
+                    push!(if cond != 0 { rhs } else { lhs })
+                },
                 instruction::Instruction::SelectTyped => {}
                 instruction::Instruction::LocalGet => push!(*locals.get(stream.get::<u32>().unwrap() as usize).unwrap()),
                 instruction::Instruction::LocalSet => {
@@ -245,10 +247,8 @@ impl InstanceImpl {
                     push!(size as u32);
                 }
 
-                instruction::Instruction::I32Const => push!(stream.get::<i32>().unwrap()),
-                instruction::Instruction::I64Const => push!(stream.get::<i64>().unwrap()),
-                instruction::Instruction::F32Const => push!(stream.get::<f32>().unwrap()),
-                instruction::Instruction::F64Const => push!(stream.get::<f64>().unwrap()),
+                instruction::Instruction::Const32 => push!(stream.get::<u32>().unwrap()),
+                instruction::Instruction::Const64 => push!(stream.get::<u64>().unwrap()),
 
                 instruction::Instruction::I32Eqz  => *top!() = ((top!(as_i32) == 0) as i32).into(),
                 instruction::Instruction::I32Eq   => *top!() = ((pop!(as_i32) == top!(as_i32)) as i32).into(),

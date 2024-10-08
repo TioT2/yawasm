@@ -1,59 +1,48 @@
 
+/// Functional type representation structure
 #[derive(PartialEq)]
 pub struct FunctionType {
+    /// Inputs
     pub inputs: Vec<Type>,
-    pub outputs: Vec<Type>,
-}
 
+    /// Outputs
+    pub outputs: Vec<Type>,
+} // struct FunctionTypes
+
+/// Number type enumeration
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
 pub enum NumberType {
-    I32 = 0x7F,
-    I64 = 0x7E,
-    F32 = 0x7D,
-    F64 = 0x7C,
-}
+    /// 32-bit integer
+    I32,
 
-impl TryFrom<u8> for NumberType {
-    type Error = ();
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0x7C..=0x7F => Ok(unsafe { std::mem::transmute::<u8, NumberType>(value) }),
-            _ => Err(()),
-        }
-    }
-}
+    /// 64-bit integer
+    I64,
+
+    /// 32-bit floating point
+    F32,
+
+    /// 64-bit floating point
+    F64,
+} // enum NumberType
 
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
 pub enum VectorType {
+    /// 128-bit vector types
     V128,
-}
+} // enum VectorType
 
-impl TryFrom<u8> for VectorType {
-    type Error = ();
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        if value == 0x7B {
-            Ok(VectorType::V128)
-        } else {
-            Err(())
+impl Into<Type> for VectorType {
+    fn into(self) -> Type {
+        match self {
+            Self::V128 => Type::V128,
         }
     }
 }
 
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
 pub enum ReferenceType {
-    Extern = 0x6F,
-    Func = 0x70,
-}
-
-impl TryFrom<u8> for ReferenceType {
-    type Error = ();
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0x6F => Ok(ReferenceType::Extern),
-            0x70 => Ok(ReferenceType::Func),
-            _ => Err(())
-        }
-    }
+    Extern,
+    Func,
 }
 
 impl Into<Type> for ReferenceType {
@@ -76,33 +65,29 @@ pub enum Type {
     FuncRef,
 }
 
-impl TryFrom<u8> for Type {
-    type Error = ();
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0x6F => Ok(Type::ExternRef),
-            0x70 => Ok(Type::FuncRef),
-            0x7B => Ok(Type::V128),
-            0x7F => Ok(Type::I32),
-            0x7E => Ok(Type::I64),
-            0x7D => Ok(Type::F32),
-            0x7C => Ok(Type::F64),
-            _ => Err(()),
-        }
-    }
-}
-
 #[derive(Copy, Clone)]
 pub enum Value {
+    /// 128-bit vector
     V128(u128),
+
+    /// 64-bit floating point number
     F64(f64),
+
+    /// 64-bit integer number
     I64(i64),
+
+    /// 32-bit floating point number
     F32(f32),
+
+    /// 32-bit integer number
     I32(i32),
+
+    /// Function reference
     FuncRef(u32),
+
+    /// External value reference
     ExternRef(u32),
-}
+} // enum Value
 
 pub trait NativeValue: Into<Value> + TryFrom<Value> + Sized {
     const VALUE_TYPE: Type;
@@ -307,140 +292,57 @@ impl TryFrom<u8> for Mutability {
     }
 }
 
-
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
-pub enum SectionID {
-    Custom = 0,
-    Type = 1,
-    Import = 2,
-    Function = 3,
-    Table = 4,
-    Memory = 5,
-    Global = 6,
-    Export = 7,
-    Start = 8,
-    Element = 9,
-    Code = 10,
-    Data = 11,
-    DataCount = 12,
-}
-
-impl TryFrom<u8> for SectionID {
-    type Error = ();
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(SectionID::Custom),
-            1 => Ok(SectionID::Type),
-            2 => Ok(SectionID::Import),
-            3 => Ok(SectionID::Function),
-            4 => Ok(SectionID::Table),
-            5 => Ok(SectionID::Memory),
-            6 => Ok(SectionID::Global),
-            7 => Ok(SectionID::Export),
-            8 => Ok(SectionID::Start),
-            9 => Ok(SectionID::Element),
-            10 => Ok(SectionID::Code),
-            11 => Ok(SectionID::Data),
-            12 => Ok(SectionID::DataCount),
-            _ => Err(())
-        }
-    }
-}
-
 #[derive(Copy, Clone)]
 pub struct TableType {
+    /// Table elements' reference type
     pub reference_type: ReferenceType,
+
+    /// Table limits
     pub limits: Limits,
-}
-
-unsafe impl bytemuck::Zeroable for Header {}
-unsafe impl bytemuck::AnyBitPattern for Header {}
-
-/// WASM magic number
-pub const WASM_MAGIC: [u8; 4] = [0x00, 0x61, 0x73, 0x6D];
-
-/// WAMS version number
-pub const WASM_VERSION: [u8; 4] = [0x01, 0x00, 0x00, 0x00];
-
-/// WASM functype magic
-pub const WASM_FUNCTYPE_MAGIC: u8 = 0x60;
-
-/// WASM file header representation structure
-#[repr(packed)]
-#[derive(Copy, Clone, Hash, PartialEq, Eq)]
-pub struct Header {
-    /// Magic number
-    pub magic: [u8; 4],
-
-    /// Version magic number
-    pub version: [u8; 4],
-} // struct Header
-
-impl Header {
-    /// Header validation function
-    /// * Returns true if header is correct supported WASM header
-    pub fn validate(self) -> bool {
-        self.magic == WASM_MAGIC && self.version == WASM_VERSION
-    } // fn validate
 }
 
 /// Export value type representation enumeration
 #[derive(Copy, Clone, Hash, PartialEq, Eq)]
 pub enum ExportType {
     /// Function
-    Function = 0,
+    Function,
 
     /// Table
-    Table = 1,
+    Table,
 
     /// Memory block
-    Memory = 2,
+    Memory,
 
     /// Global value
-    Global = 3,
+    Global,
 } // enum ExportType
 
-impl TryFrom<u8> for ExportType {
-    type Error = ();
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(ExportType::Function),
-            1 => Ok(ExportType::Table),
-            2 => Ok(ExportType::Memory),
-            3 => Ok(ExportType::Global),
-            _ => Err(()),
-        }
-    }
-}
-
-/// Import representation enumeration
-pub enum ImportDescriptor {
-    /// Function
-    Function {
-        /// Index of function type
-        type_index: u32
-    },
-    /// Table
-    Table {
-        /// Type of table
-        ty: TableType,
-    },
-    /// Memory block
-    Memory {
-        /// Limits of page count
-        page_count_limits: Limits,
-    },
-    /// Global variable
-    Global {
-        /// Value type
-        ty: Type,
-
-        /// Mutability
-        mutability: Mutability,
-    },
-} // enum ImportDescriptor
+// /// Import representation enumeration
+// pub enum ImportDescriptor {
+//     /// Function
+//     Function {
+//         /// Index of function type
+//         type_index: u32
+//     },
+//     /// Table
+//     Table {
+//         /// Type of table
+//         ty: TableType,
+//     },
+//     /// Memory block
+//     Memory {
+//         /// Limits of page count
+//         page_count_limits: Limits,
+//     },
+//     /// Global variable
+//     Global {
+//         /// Value type
+//         ty: Type,
+// 
+//         /// Mutability
+//         mutability: Mutability,
+//     },
+// } // enum ImportDescriptor
 
 /// Export descriptor representation structure
 pub struct ExportDescriptor {

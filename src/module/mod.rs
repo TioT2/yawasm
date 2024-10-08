@@ -2,7 +2,7 @@ pub mod wasm;
 
 use std::collections::HashMap;
 
-use crate::{types::{self, TableType}, Expression, Function, Limits, Type};
+use crate::{types, Expression, Function, Limits, Type};
 
 /// Raw WASM enumeration
 pub enum Source<'t> {
@@ -51,7 +51,7 @@ pub enum DataDescriptor {
         /// Memory to write to index
         memory: u32,
 
-        /// Write offseet
+        /// Write offset
         offset: u32,
     },
 } // enum DataDescriptor
@@ -82,8 +82,8 @@ pub struct ModuleImpl {
     /// Function types
     pub(crate) types: Vec<types::FunctionType>,
 
-    /// Required imports
-    pub(crate) imports: HashMap<String, HashMap<String, types::ImportDescriptor>>,
+    // /// Required imports
+    // pub(crate) imports: HashMap<String, HashMap<String, types::ImportDescriptor>>,
 
     /// Module exports
     pub(crate) exports: HashMap<String, types::ExportDescriptor>,
@@ -94,12 +94,12 @@ pub struct ModuleImpl {
     /// Descriptors of functions
     pub(crate) functions: Vec<Function>,
 
-    /// Descriptors of memory blocks (current specification of WASM allows only one block to exist, actually).
+    /// Descriptors of memory blocks (current WASM specification allows only one block to exist, actually).
     /// Vector of descriptors is used for further specification development
     pub(crate) memories: Vec<Limits>,
 
-    /// Descriptors of tables (same as memories, actually)
-    pub(crate) tables: Vec<TableType>,
+    // /// Descriptors of tables (same as memories, actually)
+    // pub(crate) tables: Vec<TableType>,
 
     /// Start function index, if presented
     pub(crate) start: Option<u32>,

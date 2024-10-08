@@ -3,7 +3,7 @@ mod item;
 
 use std::sync::Arc;
 
-use crate::{table::Table, Memory, ModuleImpl};
+use crate::{Limits, Memory, ModuleImpl};
 
 pub(crate) use item::StackItem;
 
@@ -44,8 +44,8 @@ pub struct InstanceImpl {
     /// Memory (only one used, cuz of standard)
     memory: Memory,
 
-    /// Table set
-    tables: Vec<Table>,
+    // /// Table set
+    // tables: Vec<Table>,
 
     /// Global set
     globals: Vec<StackItem>,
@@ -72,11 +72,15 @@ impl ModuleImpl {
     pub fn create_instance(self: &Arc<Self>) -> Result<InstanceImpl, RuntimeError> {
         let mut instance = InstanceImpl {
             globals: Vec::new(),
-            memory: Memory::new(),
-            tables: self.tables
-                .iter()
-                .map(|ty| Table::new(*ty, None))
-                .collect::<Vec<Table>>(),
+            memory: Memory::new(if let Some(limits) = self.memories.get(0).copied() {
+                limits
+            } else {
+                Limits { min: 0, max: None }
+            }),
+            // tables: self.tables
+            //     .iter()
+            //     .map(|ty| Table::new(*ty, None))
+            //     .collect::<Vec<Table>>(),
             module: self.clone(),
             stack: Vec::new(),
             trapped: false,

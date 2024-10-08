@@ -1,15 +1,16 @@
 mod block_decode;
 mod opcode;
+mod file;
 
-pub type Opcode = opcode::Main;
-pub type VectorOpcode = opcode::Vector;
-pub type SystemOpcode = opcode::System;
+/// Opcode
+type Opcode = opcode::Main;
 
 use std::collections::HashMap;
 
 use block_decode::decode_block;
+use file::{SectionId, WASM_FUNCTYPE_MAGIC};
 
-use crate::{instruction, types::{self, FunctionType}, util::binary_stream::BinaryInputStream, Function, Mutability, Type};
+use crate::{instruction, types::{self, FunctionType}, util::binary_stream::BinaryInputStream, ExportType, Function, Mutability, ReferenceType, Type};
 use super::{Expression, GlobalDescriptor, ModuleImpl};
 
 /// WASM enumeration type representation structure
@@ -86,7 +87,7 @@ pub enum DecodeError {
     Utf8DecodeError,
 
     /// Invalid module magic number
-    InvalidModuleMagic,
+    InvalidHeader,
 
     /// Unsigned number decode error
     UnsignedDecodeError,
@@ -116,7 +117,7 @@ impl std::fmt::Display for DecodeError {
             Self::EnumError { ty, value } => write!(f, "unknown {}: {}", ty, value),
             Self::FunctionTypesSizeAndCodeSizeUnmatched => write!(f, "count of function type index section elements unmatched with code section element count"),
             Self::Utf8DecodeError => write!(f, "utf8 decode error"),
-            Self::InvalidModuleMagic => write!(f, "invalid module magic"),
+            Self::InvalidHeader => write!(f, "invalid module magic"),
             Self::UnsignedDecodeError => write!(f, "unsigned decode error"),
             Self::SignedDecodeError { bit_count } => write!(f, "error durnig {}-bit signed decode", bit_count),
             Self::UnexpectedStreamEnd => write!(f, "unexpected stream end"),
@@ -188,15 +189,41 @@ impl std::fmt::Display for CodeValidationError {
     }
 } // impl std::fmt::Display for CodeValidationError
 
+/// Type decode function
+pub fn decode_type(byte: u8) -> Result<Type, DecodeError> {
+    Ok(match byte {
+        0x6F => Type::ExternRef,
+        0x70 => Type::FuncRef,
+        0x7B => Type::V128,
+        0x7F => Type::I32,
+        0x7E => Type::I64,
+        0x7D => Type::F32,
+        0x7C => Type::F64,
+        _ => return Err(EnumType::Type.as_decode_error(byte)),
+    })
+} // fn decode_type
+
+pub fn decode_export_type(byte: u8) -> Result<ExportType, DecodeError> {
+    Ok(match byte {
+        0 => ExportType::Function,
+        1 => ExportType::Table,
+        2 => ExportType::Memory,
+        3 => ExportType::Global,
+        _ => return Err(EnumType::ExportType.as_decode_error(byte)),
+    })
+} // fn decode_export_type
+
 // Own binary stream implementation
 impl<'t> BinaryInputStream<'t> {
     /// Vector decode function
     /// * `decode_func` - function to decode values by
     /// * Returns vector of decoded values
-    pub fn wasm_decode_vector<DT: bytemuck::AnyBitPattern, T>(&mut self, decode_func: &dyn Fn(&DT) -> Option<T>) -> Option<Vec<T>> {
-        let len = self.decode_unsigned()?;
+    pub fn wasm_decode_vector<DT: bytemuck::AnyBitPattern, T>(&mut self, decode_func: &dyn Fn(&DT) -> Result<T, DecodeError>) -> Result<Vec<T>, DecodeError> {
+        let len = self.wasm_decode_unsigned()?;
         self
-            .get_slice::<DT>(len)?
+            .get_slice::<DT>(len)
+            .ok_or(DecodeError::UnexpectedStreamEnd)
+            ?
             .iter()
             .map(decode_func)
             .collect()
@@ -222,7 +249,7 @@ impl<'t> BinaryInputStream<'t> {
         Ok(if byte == 0x40 {
             self.skip(1).unwrap();
             instruction::BlockType::Void
-        } else if let Ok(val_type) = types::Type::try_from(byte) {
+        } else if let Ok(val_type) = decode_type(byte) {
             self.skip(1).unwrap();
             instruction::BlockType::ResolvingTo(val_type)
         } else {
@@ -230,34 +257,22 @@ impl<'t> BinaryInputStream<'t> {
         })
     } // fn wasm_decode_block_type
 
+    pub fn wasm_decode_reference_type(&mut self) -> Result<ReferenceType, DecodeError> {
+        let byte = self.get::<u8>().ok_or(DecodeError::UnexpectedStreamEnd)?;
+
+        Ok(match byte {
+            0x6F => ReferenceType::Extern,
+            0x70 => ReferenceType::Func,
+            _ => return Err(EnumType::ReferenceType.as_decode_error(byte))
+        })
+    }
+
     /// Unsigned number decode function
     /// * Returns decoded number
     pub fn wasm_decode_unsigned(&mut self) -> Result<usize, DecodeError> {
         self.decode_unsigned().ok_or(DecodeError::UnsignedDecodeError)
     } // fn wasm_decode_unsigned
 } // impl BinaryInputStream
-
-/// Section table decode function
-/// * `bits` - sections data
-/// * Returns map with (section type -> section bits) map
-fn decode_sections<'t>(bits: &'t [u8]) -> Result<HashMap<types::SectionID, &'t [u8]>, DecodeError> {
-    let mut stream = BinaryInputStream::new(bits);
-
-    if !stream.get::<types::Header>().ok_or(DecodeError::UnexpectedStreamEnd)?.validate() {
-        return Err(DecodeError::UnexpectedStreamEnd);
-    }
-
-    let mut sections = HashMap::<types::SectionID, &[u8]>::new();
-
-    while let Some(section_id) = stream.get::<u8>() {
-        let section_id = types::SectionID::try_from(section_id).map_err(|_| EnumType::SectionId.as_decode_error(section_id))?;
-        let length = stream.decode_unsigned().ok_or(DecodeError::UnexpectedStreamEnd)?;
-        let data = stream.get_byte_slice(length).ok_or(DecodeError::UnexpectedStreamEnd)?;
-        sections.insert(section_id, data);
-    }
-
-    Ok(sections)
-} // fn decode_section
 
 /// Function type section decode function
 /// * section - section bits
@@ -270,15 +285,15 @@ fn decode_function_type_section(section: &[u8]) -> Result<Vec<types::FunctionTyp
     (0..type_count).map(|_| {
             let functype_magic = stream.get::<u8>().ok_or(DecodeError::UnexpectedStreamEnd)?;
 
-            if functype_magic != types::WASM_FUNCTYPE_MAGIC {
-                return Err(DecodeError::InvalidModuleMagic);
+            if functype_magic != WASM_FUNCTYPE_MAGIC {
+                return Err(DecodeError::InvalidHeader);
             }
 
-            const DECODE_FUNC: &'static dyn Fn(&u8) -> Option<Type> = &|v: &u8| Type::try_from(*v).ok();
+            const DECODE_FUNC: &'static dyn Fn(&u8) -> Result<Type, DecodeError> = &|v: &u8| decode_type(*v);
 
             Ok(types::FunctionType {
-                inputs: stream.wasm_decode_vector(DECODE_FUNC).ok_or(DecodeError::UnexpectedStreamEnd)?,
-                outputs: stream.wasm_decode_vector(DECODE_FUNC).ok_or(DecodeError::UnexpectedStreamEnd)?,
+                inputs: stream.wasm_decode_vector(DECODE_FUNC)?,
+                outputs: stream.wasm_decode_vector(DECODE_FUNC)?,
             })
         })
         .collect::<Result<Vec<types::FunctionType>, DecodeError>>()
@@ -307,10 +322,10 @@ fn decode_table_section(section: &[u8]) -> Result<Vec<types::TableType>, DecodeE
 
     (0..stream.decode_unsigned().ok_or(DecodeError::UnexpectedStreamEnd)?)
         .map(|_| {
-            let type_byte = stream.get::<u8>().ok_or(DecodeError::UnexpectedStreamEnd)?;
+            let reference_type = stream.wasm_decode_reference_type()?;
 
             Ok(types::TableType {
-                reference_type: TryInto::<types::ReferenceType>::try_into(type_byte).map_err(|_| EnumType::ReferenceType.as_decode_error(type_byte))?,
+                reference_type,
                 limits: stream.wasm_decode_limits()?,
             })
         })
@@ -340,9 +355,10 @@ fn decode_export_section(section: &[u8]) -> Result<HashMap<String, types::Export
                 let len = stream.decode_unsigned().ok_or(DecodeError::UnsignedDecodeError)?;
                 String::from_utf8(stream.get_byte_slice(len).ok_or(DecodeError::UnsignedDecodeError)?.to_vec()).map_err(|_| DecodeError::Utf8DecodeError)?
             };
-            let type_byte = stream.get::<u8>().ok_or(DecodeError::UnexpectedStreamEnd)?;
             let desc = types::ExportDescriptor {
-                ty: type_byte.try_into().map_err(|_| EnumType::ExportType.as_decode_error(type_byte))?,
+                ty: decode_export_type(
+                    stream.get::<u8>().ok_or(DecodeError::UnexpectedStreamEnd)?
+                )?,
                 index: stream.decode_unsigned().ok_or(DecodeError::UnsignedDecodeError)? as u32,
             };
 
@@ -390,12 +406,9 @@ fn decode_global_section<'t>(
 
     (0..stream.wasm_decode_unsigned()?)
         .map(|_| {
-            let value_type: Type = {
-                let byte = stream.get::<u8>().ok_or(DecodeError::UnexpectedStreamEnd)?;
-                byte
-                    .try_into()
-                    .map_err(|_| EnumType::Type.as_decode_error(byte))?
-            };
+            let value_type = decode_type(
+                stream.get::<u8>().ok_or(DecodeError::UnexpectedStreamEnd)?
+            )?;
     
             let mutability: Mutability = {
                 let byte = stream.get::<u8>().ok_or(DecodeError::UnexpectedStreamEnd)?;
@@ -459,33 +472,33 @@ impl ModuleImpl {
     /// * Returns decoded WASM module
     pub fn from_wasm(src: &[u8]) -> Result<Self, DecodeError> {
         // Sections
-        let sections = decode_sections(src)?;
+        let file = file::File::decode(src)?;
 
-        let function_types = if let Some(bits) = sections.get(&types::SectionID::Type) {
+        let function_types = if let Some(bits) = file.get_section(SectionId::Type) {
             decode_function_type_section(bits)?
         } else {
             Vec::new()
         };
 
-        let function_type_idx = if let Some(bits) = sections.get(&types::SectionID::Function) {
+        let function_type_idx = if let Some(bits) = file.get_section(SectionId::Function) {
             decode_function_section(bits)?
         } else {
             Vec::new()
         };
 
-        let tables = if let Some(bits) = sections.get(&types::SectionID::Table) {
+        let tables = if let Some(bits) = file.get_section(SectionId::Table) {
             decode_table_section(bits)?
         } else {
             Vec::new()
         };
 
-        let memories = if let Some(bits) = sections.get(&types::SectionID::Memory) {
+        let memories = if let Some(bits) = file.get_section(SectionId::Memory) {
             decode_memory_section(bits)?
         } else {
             Vec::new()
         };
 
-        let globals: Vec<GlobalDescriptor> = if let Some(bits) = sections.get(&types::SectionID::Global) {
+        let globals: Vec<GlobalDescriptor> = if let Some(bits) = file.get_section(SectionId::Global) {
             decode_global_section(
                 bits,
                 &function_types,
@@ -495,19 +508,19 @@ impl ModuleImpl {
             Vec::new()
         };
 
-        let exports = if let Some(bits) = sections.get(&types::SectionID::Export) {
+        let exports = if let Some(bits) = file.get_section(SectionId::Export) {
             decode_export_section(bits)?
         } else {
             HashMap::new()
         };
 
-        let start = if let Some(bits) = sections.get(&types::SectionID::Start) {
+        let start = if let Some(bits) = file.get_section(SectionId::Start) {
             Some(decode_start_section(bits)?)
         } else {
             None
         };
 
-        let code = if let Some(bits) = sections.get(&types::SectionID::Code) {
+        let code = if let Some(bits) = file.get_section(SectionId::Code) {
             decode_code_section(bits)?
         } else {
             Vec::new()
@@ -528,7 +541,7 @@ impl ModuleImpl {
                 for _ in 0..stream.wasm_decode_unsigned()? {
                     let local_repeat_count = stream.wasm_decode_unsigned()?;
                     let valtype_byte = stream.get::<u8>().ok_or(DecodeError::UnexpectedStreamEnd)?;
-                    let ty: Type = valtype_byte.try_into().map_err(|_| EnumType::Type.as_decode_error(valtype_byte))?;
+                    let ty: Type = decode_type(valtype_byte)?;
 
                     locals.extend(std::iter::repeat(ty).take(local_repeat_count));
                 }
@@ -561,13 +574,13 @@ impl ModuleImpl {
             })
         }).collect::<Result<Vec<Function>, DecodeError>>()?;
 
+        _ = tables;
         Ok(ModuleImpl {
             exports,
             functions,
             globals,
-            tables,
+            // tables,
             memories,
-            imports: HashMap::new(),
             types: function_types,
             start,
         })

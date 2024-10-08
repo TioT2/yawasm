@@ -1,14 +1,13 @@
 use crate::{
-    instruction::{self, BlockHeader, BlockType, BranchHeader},
+    instruction::{self, BlockHeader, BlockType, BranchHeader, Instruction},
     module::GlobalDescriptor,
     types::FunctionType,
     util::binary_stream::{BinaryInputStream, BinaryOutputStream},
     Mutability,
-    ReferenceType,
     Type
 };
 
-use super::{DecodeError, Opcode, CodeValidationError, EnumType};
+use super::{DecodeError, Opcode, CodeValidationError, EnumType, decode_type};
 
 /// Input/Output ftype blocktype decoder
 struct BlockTypeIODecoder {
@@ -265,13 +264,16 @@ impl<'t, 'b> DecodeContext<'t, 'b> {
                     binary_operation!(F32, F32, I32);
                     output_stream.write(&instruction.unwrap());
                 }
+
                 Opcode::F32Const => {
                     push!(F32);
 
-                    let val = self.stream.get::<f32>().ok_or(DecodeError::UnexpectedStreamEnd)?;
-                    output_stream.write(&instruction.unwrap());
+                    let val = self.stream.get::<f32>()
+                        .ok_or(DecodeError::UnexpectedStreamEnd)?;
+                    output_stream.write(&Instruction::Const32);
                     output_stream.write(&val);
                 }
+
                 Opcode::F32Load => {
                     unary_operation!(I32, F32);
 
@@ -320,7 +322,7 @@ impl<'t, 'b> DecodeContext<'t, 'b> {
                     push!(F64);
 
                     let val = self.stream.get::<f64>().ok_or(DecodeError::UnexpectedStreamEnd)?;
-                    output_stream.write(&instruction.unwrap());
+                    output_stream.write(&Instruction::Const64);
                     output_stream.write(&val);
                 }
                 Opcode::F64Load => {
@@ -374,7 +376,7 @@ impl<'t, 'b> DecodeContext<'t, 'b> {
 
                     let n = self.stream.wasm_decode_unsigned()? as u32;
 
-                    output_stream.write(&instruction::Instruction::I32Const);
+                    output_stream.write(&instruction::Instruction::Const32);
                     output_stream.write(&n);
                 }
 
@@ -453,7 +455,7 @@ impl<'t, 'b> DecodeContext<'t, 'b> {
 
                     let n = self.stream.wasm_decode_unsigned()? as u64;
 
-                    output_stream.write(&instruction.unwrap());
+                    output_stream.write(&Instruction::Const64);
                     output_stream.write(&n);
                 }
 
@@ -548,7 +550,6 @@ impl<'t, 'b> DecodeContext<'t, 'b> {
                 }
 
                 Opcode::Call | Opcode::CallIndirect => {
-
                     output_stream.write(&instruction.unwrap());
 
                     let type_id = if opcode == Opcode::CallIndirect {
@@ -643,12 +644,11 @@ impl<'t, 'b> DecodeContext<'t, 'b> {
                 }
 
                 Opcode::RefNull => {
-                    let byte = self.stream.get::<u8>().ok_or(DecodeError::UnexpectedStreamEnd)?;
-                    let ref_type = ReferenceType::try_from(byte).map_err(|_| EnumType::ReferenceType.as_decode_error(byte))?;
+                    let ref_type = self.stream.wasm_decode_reference_type()?;
 
                     frame.stack.push(ref_type.into());
 
-                    output_stream.write(&instruction::Instruction::I32Const);
+                    output_stream.write(&instruction::Instruction::Const32);
                     output_stream.write(&0u32);
                 }
 
@@ -665,8 +665,8 @@ impl<'t, 'b> DecodeContext<'t, 'b> {
                 Opcode::Select | Opcode::SelectTyped => {
                     let required_type = if opcode == Opcode::SelectTyped {
                         Some(self.stream
-                            .wasm_decode_vector(&|b: &u8| Type::try_from(*b).ok())
-                            .ok_or(DecodeError::UnexpectedStreamEnd)?
+                            .wasm_decode_vector(&|b: &u8| decode_type(*b))
+                            ?
                             .get(0)
                             .copied()
                             .ok_or(CodeValidationError::NoTypesInTypedSelect)?
@@ -720,7 +720,7 @@ impl<'t, 'b> DecodeContext<'t, 'b> {
 
                     push!(FuncRef);
 
-                    output_stream.write(&instruction::Instruction::I32Const);
+                    output_stream.write(&instruction::Instruction::Const32);
                     output_stream.write(&(func_index as u32));
                 }
 

@@ -1,3 +1,5 @@
+use crate::Limits;
+
 
 /// Size of single memory page
 pub const PAGE_SIZE: usize = 65536;
@@ -7,6 +9,8 @@ const ALLOCATION_ALIGNMENT: usize = 1;
 
 /// WASM memory representation structure
 pub struct Memory {
+    allocation_limits: Limits,
+
     /// Count of memory pages allocated
     page_count: usize,
 
@@ -17,15 +21,19 @@ pub struct Memory {
 impl Memory {
     /// Memory constructor
     /// * Returns new memory with single page allocated
-    pub fn new() -> Memory {
-        let alloc_layout = std::alloc::Layout::from_size_align(PAGE_SIZE, 1).unwrap();
+    pub fn new(allocation_limits: Limits) -> Memory {
+        let alloc_layout = std::alloc::Layout::from_size_align(PAGE_SIZE * allocation_limits.min as usize, 1).unwrap();
         let ptr = unsafe { std::alloc::alloc_zeroed(alloc_layout.clone()) };
 
         if ptr.is_null() {
             std::alloc::handle_alloc_error(alloc_layout);
         }
 
-        return Memory { ptr, page_count: 1 };
+        return Memory {
+            allocation_limits,
+            ptr,
+            page_count: 1
+        };
     } // fn new
 
     /// Memory size getting function
@@ -70,8 +78,15 @@ impl Memory {
 
     /// Memory resizing function
     /// * `grow_page_count` - count of pages to grow memory by
-    pub fn grow(&mut self, grow_page_count: usize) {
+    pub fn grow(&mut self, grow_page_count: usize) -> Option<()> {
         let new_page_count = self.page_count + grow_page_count;
+
+        if let Some(max_count) = self.allocation_limits.max {
+            if new_page_count > max_count as usize {
+                return None;
+            }
+        }
+
         let new_alloc_layout = std::alloc::Layout::from_size_align(new_page_count * PAGE_SIZE, ALLOCATION_ALIGNMENT).unwrap();
 
         unsafe {
@@ -86,6 +101,8 @@ impl Memory {
         }
 
         self.page_count = new_page_count;
+
+        Some(())
     } // fn grow
 
     /// Memory as slice getting function
