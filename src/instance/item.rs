@@ -56,11 +56,11 @@ macro_rules! impl_stack_item_for {
 
         impl StackItem {
             pub unsafe fn $as(self) -> $t {
-                self.$field
+                unsafe { self.$field }
             }
 
             pub unsafe fn $as_mut(&mut self) -> &mut $t {
-                &mut self.$field
+                unsafe { &mut self.$field }
             }
         }
     }

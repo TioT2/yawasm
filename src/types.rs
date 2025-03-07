@@ -89,18 +89,18 @@ pub enum Value {
     ExternRef(u32),
 } // enum Value
 
-pub trait NativeValue: Into<Value> + TryFrom<Value> + Sized {
+pub trait RawValue: Into<Value> + TryFrom<Value> + Sized {
     const VALUE_TYPE: Type;
 }
 
-pub trait NativeValueSet: Sized {
+pub trait RawValueSet: Sized {
     const VALUE_TYPES: &'static [Type];
 
     fn into_values(self) -> Vec<Value>;
     fn try_from_values(values: &[Value]) -> Option<Self>;
 }
 
-impl NativeValueSet for () {
+impl RawValueSet for () {
     const VALUE_TYPES: &'static [Type] = &[];
 
     fn into_values(self) -> Vec<Value> {
@@ -116,7 +116,7 @@ impl NativeValueSet for () {
     }
 }
 
-impl<T: NativeValue> NativeValueSet for T {
+impl<T: RawValue> RawValueSet for T {
     const VALUE_TYPES: &'static [Type] = &[T::VALUE_TYPE];
 
     fn into_values(self) -> Vec<Value> {
@@ -130,7 +130,7 @@ impl<T: NativeValue> NativeValueSet for T {
 
 macro_rules! impl_native_value_set {
     ($($var_name: ident: $name: ident),*) => {
-        impl<$($name: NativeValue),*> NativeValueSet for ($($name),*) {
+        impl<$($name: RawValue),*> RawValueSet for ($($name),*) {
             const VALUE_TYPES: &'static [Type] = &[ $($name::VALUE_TYPE),* ];
 
             fn into_values(self) -> Vec<Value> {
@@ -187,7 +187,7 @@ macro_rules! value_impl_from {
             }
         }
 
-        impl NativeValue for $src {
+        impl RawValue for $src {
             const VALUE_TYPE: Type = $value_type;
         }
     }

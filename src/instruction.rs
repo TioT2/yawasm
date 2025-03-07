@@ -193,10 +193,10 @@ pub enum Instruction {
     /// Heap size extension request instruction
     MemoryGrow,
 
-    /// 32 bit constant to stack pushing function
+    /// Push 32-bit constant to stack
     Const32,
 
-    /// 64 bit constant to stack pusing function
+    /// Push 64-bit constant to stack
     Const64,
 
     /// I32 zero-equality testing instruction

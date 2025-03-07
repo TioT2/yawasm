@@ -14,7 +14,7 @@ pub(crate) use instance::InstanceImpl;
 
 pub use module::{ModuleCreateError, Source};
 pub use memory::Memory;
-pub use types::{Value, Type, Mutability, Limits, ReferenceType, NumberType, ExportType, NativeValue, NativeValueSet};
+pub use types::{Value, Type, Mutability, Limits, ReferenceType, NumberType, ExportType, RawValue, RawValueSet};
 
 /// Expression internal representation structure
 pub(crate) struct Expression {
@@ -112,7 +112,7 @@ impl FunctionReference {
         })
     }
 
-    pub fn as_typed_callable<I: NativeValueSet, O: NativeValueSet>(
+    pub fn as_typified<I: RawValueSet, O: RawValueSet>(
         &self
     ) -> Result<Box<dyn Fn(I) -> Result<O, RuntimeError>>, FunctionTypizationError> {
         let func = self.module.functions.get(self.func_id as usize).unwrap();

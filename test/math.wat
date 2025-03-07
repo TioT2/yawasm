@@ -8,7 +8,7 @@
   ;;   (f32) Fast inverse square root with one newtonian iteration of $x parameter
   (func $f_inv_sqrt (export "f_inv_sqrt") (param $x f32) (result f32)
     (local $v f32)
-    
+
     i32.const 0x5F3759DF
     local.get $x
     i32.reinterpret_f32

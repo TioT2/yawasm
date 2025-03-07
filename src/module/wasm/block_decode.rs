@@ -75,6 +75,32 @@ struct DecodeContext<'t, 'b> where 't: 'b {
     stack: Vec<ValidationStackFrame>,
 } // struct DecodeContext
 
+impl ValidationStackFrame {
+    /// Check stack frame top
+    pub fn check_top(&self, expected_types: &[Type]) -> bool {
+        let range = self.stack.len() - expected_types.len()..self.stack.len();
+
+        match self.stack.get(range) {
+            Some(actual_types) => actual_types == expected_types,
+            None => false
+        }
+    }
+
+    /// Consume inputs
+    pub fn consume_inputs(&mut self, inputs: &[Type]) -> Result<(), DecodeError> {
+        let range = self.stack.len() - inputs.len()..self.stack.len();
+
+        let vs = self.stack.get(range).ok_or(CodeValidationError::InvalidStackTop)?;
+
+        if vs != inputs {
+            Err(CodeValidationError::InvalidStackTop.into())
+        } else {
+            self.stack.truncate(self.stack.len() - inputs.len());
+            Ok(())
+        }
+    }
+}
+
 impl<'t, 'b> DecodeContext<'t, 'b> {
     /// Decode context initialization function
     /// * `stream` - stream to read data from
@@ -106,30 +132,6 @@ impl<'t, 'b> DecodeContext<'t, 'b> {
     pub fn decode_block(&mut self, inputs: &[Type], expected_outputs: &[Type]) -> Result<(Vec<u8>, Opcode), DecodeError> {
         // Stack of operand types, needed for validation and further type remove
         let mut output_stream = BinaryOutputStream::new();
-
-        impl ValidationStackFrame {
-            pub fn check_top(&self, expected_types: &[Type]) -> bool {
-                let range = self.stack.len() - expected_types.len()..self.stack.len();
-
-                match self.stack.get(range) {
-                    Some(actual_types) => actual_types == expected_types,
-                    None => false
-                }
-            }
-
-            pub fn consume_inputs(&mut self, inputs: &[Type]) -> Result<(), DecodeError> {
-                let range = self.stack.len() - inputs.len()..self.stack.len();
-
-                let vs = self.stack.get(range).ok_or(CodeValidationError::InvalidStackTop)?;
-
-                if vs != inputs {
-                    Err(CodeValidationError::InvalidStackTop.into())
-                } else {
-                    self.stack.truncate(self.stack.len() - inputs.len());
-                    Ok(())
-                }
-            }
-        }
 
         let mut frame = ValidationStackFrame {
             stack: inputs.to_vec(),

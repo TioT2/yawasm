@@ -15,13 +15,13 @@ mod tests {
         let wasm_vec3f_norm = instance
             .get_function("vec3f_norm")
             .expect("Error getting function")
-            .as_typed_callable::<(f32, f32, f32), (f32, f32, f32)>()
+            .as_typified::<(f32, f32, f32), (f32, f32, f32)>()
             .expect("Error hard-typing function");
 
         let wasm_f_inv_sqrt = instance
             .get_function("f_inv_sqrt")
             .expect("Error getting function")
-            .as_typed_callable::<f32, f32>()
+            .as_typified::<f32, f32>()
             .expect("Error hard-typing function");
 
         let i = wasm_f_inv_sqrt(4.0)
@@ -44,13 +44,13 @@ mod tests {
         let wasm_inc_counter = instance
             .get_function("inc_counter")
             .expect("Error getting function")
-            .as_typed_callable::<(), ()>()
+            .as_typified::<(), ()>()
             .expect("Error hard-typing function");
 
         let wasm_get_counter = instance
             .get_function("get_counter")
             .expect("Error getting function")
-            .as_typed_callable::<(), i32>()
+            .as_typified::<(), i32>()
             .expect("Error hard-typing function");
 
         assert_eq!(wasm_get_counter(()), Ok(0));
