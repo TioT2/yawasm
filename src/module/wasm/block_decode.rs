@@ -702,11 +702,7 @@ impl<'t, 'b> DecodeContext<'t, 'b> {
                     // insert value
                     frame.stack.push(first);
 
-                    if opcode == Opcode::Select {
-                        output_stream.write(&instruction::Instruction::Select);
-                    } else {
-                        output_stream.write(&instruction::Instruction::SelectTyped);
-                    }
+                    output_stream.write(&instruction::Instruction::Select);
                 }
 
                 Opcode::Return => {

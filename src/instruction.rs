@@ -94,9 +94,6 @@ pub enum Instruction {
     /// Non-zero element selecting instruction
     Select,
 
-    /// Typed element selecting instruction
-    SelectTyped,
-
     /// Local variable getting instruction
     LocalGet,
 
@@ -119,16 +116,10 @@ pub enum Instruction {
     TableSet,
 
     /// I32 from heap to stack loading instruction
-    I32Load,
+    Load32,
 
     /// I64 from heap to stack loading instruction
-    I64Load,
-
-    /// F32 from heap to stack loading instruction
-    F32Load,
-
-    /// F64 from heap to stack loading instruction
-    F64Load,
+    Load64,
 
     /// I8 from heap to I32 stack entry loading instruction
     I32Load8S,
@@ -160,32 +151,17 @@ pub enum Instruction {
     /// U32 from heap to I64 stack entry loading instruction
     I64Load32U,
 
-    /// I32 to heap storing instruction
-    I32Store,
+    /// Store 8 bits
+    Store8,
 
-    /// I64 to heap storing instruction
-    I64Store,
+    /// Store 16 bits
+    Store16,
 
-    /// F32 to heap storing instruction
-    F32Store,
+    /// Store 32 bits
+    Store32,
 
-    /// F64 heap storing instruction
-    F64Store,
-
-    /// First I32 8 bits to heap storing instruction
-    I32Store8,
-
-    /// First I32 16 bits to heap storing instruction
-    I32Store16,
-
-    /// First I64 8 bits to heap storing instruction
-    I64Store8,
-
-    /// First I64 16 bits to heap storing instruction
-    I64Store16,
-
-    /// First I64 32 bits to heap storing instruction
-    I64Store32,
+    /// Store 64 bits
+    Store64,
 
     /// Heap (in 64kb memory pages) current size getting instruction
     MemorySize,
@@ -199,7 +175,7 @@ pub enum Instruction {
     /// Push 64-bit constant to stack
     Const64,
 
-    /// I32 zero-equality testing instruction
+    /// I32 zero equality testing instruction
     I32Eqz,
 
     /// I32 equality testing instructino
@@ -550,25 +526,25 @@ pub enum Instruction {
     /// F64 from signed I64 conversion instruction
     F64ConvertI64S,
 
-    /// F64 from unsigned I64 conversion instruction
+    /// Convert I64U into F64
     F64ConvertI64U,
 
-    /// F64 from F23 conversion instruction
+    /// Convert F32 into F64
     F64PromoteF32,
 
-    /// I32 from signed I8 extension function
+    /// Extend I32 from signed I8
     I32Extend8S,
 
-    /// I32 from signed I16 extension function
+    /// Extend I32 from signed I16
     I32Extend16S,
 
-    /// I64 from signed I8 extension function
+    /// Extend I64 from signed I8
     I64Extend8S,
 
-    /// I64 from signed I16 extension function
+    /// Extend I64 from signed I16
     I64Extend16S,
 
-    /// I64 from signed I32 extension function
+    /// Extend I64 from signed I32
     I64Extend32S,
 
     /// System instruction extension

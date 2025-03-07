@@ -198,7 +198,6 @@ impl InstanceImpl {
 
                     push!(if cond != 0 { rhs } else { lhs })
                 },
-                instruction::Instruction::SelectTyped => {}
                 instruction::Instruction::LocalGet => push!(*locals.get(stream.get::<u32>().unwrap() as usize).unwrap()),
                 instruction::Instruction::LocalSet => {
                     *locals.get_mut(stream.get::<u32>().unwrap() as usize).unwrap() = pop!();
@@ -212,10 +211,8 @@ impl InstanceImpl {
                 }
                 instruction::Instruction::TableGet => {}
                 instruction::Instruction::TableSet => {}
-                instruction::Instruction::I32Load => push!(load!(u32, stream.get::<u32>().unwrap() + pop!(as_u32))),
-                instruction::Instruction::F32Load => push!(load!(f32, stream.get::<u32>().unwrap() + pop!(as_u32))),
-                instruction::Instruction::I64Load => push!(load!(u64, stream.get::<u32>().unwrap() + pop!(as_u32))),
-                instruction::Instruction::F64Load => push!(load!(f64, stream.get::<u32>().unwrap() + pop!(as_u32))),
+                instruction::Instruction::Load32 => push!(load!(u32, stream.get::<u32>().unwrap() + pop!(as_u32))),
+                instruction::Instruction::Load64 => push!(load!(u64, stream.get::<u32>().unwrap() + pop!(as_u32))),
                 instruction::Instruction::I32Load8S  => push!(load!(i8,  stream.get::<u32>().unwrap() + pop!(as_u32)) as i32),
                 instruction::Instruction::I32Load8U  => push!(load!(u8,  stream.get::<u32>().unwrap() + pop!(as_u32)) as u32),
                 instruction::Instruction::I32Load16S => push!(load!(i16, stream.get::<u32>().unwrap() + pop!(as_u32)) as i32),
@@ -226,15 +223,12 @@ impl InstanceImpl {
                 instruction::Instruction::I64Load16U => push!(load!(u16, stream.get::<u32>().unwrap() + pop!(as_u32)) as u64),
                 instruction::Instruction::I64Load32S => push!(load!(i32, stream.get::<u32>().unwrap() + pop!(as_u32)) as i64),
                 instruction::Instruction::I64Load32U => push!(load!(u32, stream.get::<u32>().unwrap() + pop!(as_u32)) as u64),
-                instruction::Instruction::I32Store   => store!(i32, stream.get::<u32>().unwrap() + pop!(as_u32), pop!(as_i32)),
-                instruction::Instruction::I64Store   => store!(i64, stream.get::<u32>().unwrap() + pop!(as_u32), pop!(as_i64)),
-                instruction::Instruction::F32Store   => store!(f32, stream.get::<u32>().unwrap() + pop!(as_u32), pop!(as_f32)),
-                instruction::Instruction::F64Store   => store!(f64, stream.get::<u32>().unwrap() + pop!(as_u32), pop!(as_f64)),
-                instruction::Instruction::I32Store8  => store!(u8,  stream.get::<u32>().unwrap() + pop!(as_u32), (pop!(as_u32) & 0x000000FF) as u8 ),
-                instruction::Instruction::I32Store16 => store!(u16, stream.get::<u32>().unwrap() + pop!(as_u32), (pop!(as_u32) & 0x0000FFFF) as u16),
-                instruction::Instruction::I64Store8  => store!(u8,  stream.get::<u32>().unwrap() + pop!(as_u32), (pop!(as_u64) & 0x000000FF) as u8 ),
-                instruction::Instruction::I64Store16 => store!(u16, stream.get::<u32>().unwrap() + pop!(as_u32), (pop!(as_u64) & 0x0000FFFF) as u16),
-                instruction::Instruction::I64Store32 => store!(u32, stream.get::<u32>().unwrap() + pop!(as_u32), (pop!(as_u64) & 0xFFFFFFFF) as u32),
+
+                instruction::Instruction::Store8    => store!(u8,  stream.get::<u32>().unwrap() + pop!(as_u32), (pop!(as_u64) & 0x000000FF) as u8 ),
+                instruction::Instruction::Store16   => store!(u16, stream.get::<u32>().unwrap() + pop!(as_u32), (pop!(as_u64) & 0x0000FFFF) as u16),
+                instruction::Instruction::Store32   => store!(u32, stream.get::<u32>().unwrap() + pop!(as_u32), pop!(as_u32)),
+                instruction::Instruction::Store64   => store!(u64, stream.get::<u32>().unwrap() + pop!(as_u32), pop!(as_u64)),
+
                 instruction::Instruction::MemorySize => push!(self.memory.page_count() as u32),
 
                 // TODO Add memory grow failure
